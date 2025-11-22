@@ -145,15 +145,27 @@ class HotkeyManager: ObservableObject {
 
             print("⚠️ Failed to register hotkey: \(status)")
 
-            // Show user-facing error
+            // Show user-facing error (safe alert pattern to avoid deadlock)
             DispatchQueue.main.async { [weak self] in
                 guard let self = self else { return }
-                let alert = NSAlert()
-                alert.messageText = "Hotkey Registration Failed"
-                alert.informativeText = "Could not register \(self.hotkeyDisplayString). This hotkey may be in use by another application. Please choose a different key combination."
-                alert.alertStyle = .warning
-                alert.addButton(withTitle: "OK")
-                alert.runModal()
+
+                // CRITICAL: Check if app is in foreground to avoid deadlock
+                if NSApplication.shared.isActive {
+                    // App in foreground - safe to show modal alert
+                    let alert = NSAlert()
+                    alert.messageText = "Hotkey Registration Failed"
+                    alert.informativeText = "Could not register \(self.hotkeyDisplayString). This hotkey may be in use by another application. Please choose a different key combination."
+                    alert.alertStyle = .warning
+                    alert.addButton(withTitle: "OK")
+                    alert.runModal()
+                } else {
+                    // App in background - use notification instead to avoid deadlock
+                    let notification = NSUserNotification()
+                    notification.title = "Hotkey Registration Failed"
+                    notification.informativeText = "Could not register \(self.hotkeyDisplayString). Hotkey may be in use by another application."
+                    notification.soundName = NSUserNotificationDefaultSoundName
+                    NSUserNotificationCenter.default.deliver(notification)
+                }
 
                 // Disable hotkey since it failed
                 self.isEnabled = false
@@ -224,15 +236,27 @@ class HotkeyManager: ObservableObject {
 
             print("⚠️ Failed to register paste hotkey: \(status)")
 
-            // Show user-facing error
+            // Show user-facing error (safe alert pattern to avoid deadlock)
             DispatchQueue.main.async { [weak self] in
                 guard let self = self else { return }
-                let alert = NSAlert()
-                alert.messageText = "Paste Hotkey Registration Failed"
-                alert.informativeText = "Could not register \(self.pasteHotkeyDisplayString). This hotkey may be in use by another application. Please choose a different key combination."
-                alert.alertStyle = .warning
-                alert.addButton(withTitle: "OK")
-                alert.runModal()
+
+                // CRITICAL: Check if app is in foreground to avoid deadlock
+                if NSApplication.shared.isActive {
+                    // App in foreground - safe to show modal alert
+                    let alert = NSAlert()
+                    alert.messageText = "Paste Hotkey Registration Failed"
+                    alert.informativeText = "Could not register \(self.pasteHotkeyDisplayString). This hotkey may be in use by another application. Please choose a different key combination."
+                    alert.alertStyle = .warning
+                    alert.addButton(withTitle: "OK")
+                    alert.runModal()
+                } else {
+                    // App in background - use notification instead to avoid deadlock
+                    let notification = NSUserNotification()
+                    notification.title = "Paste Hotkey Registration Failed"
+                    notification.informativeText = "Could not register \(self.pasteHotkeyDisplayString). Hotkey may be in use by another application."
+                    notification.soundName = NSUserNotificationDefaultSoundName
+                    NSUserNotificationCenter.default.deliver(notification)
+                }
 
                 // Disable hotkey since it failed
                 self.pasteHotkeyEnabled = false

@@ -1,11 +1,60 @@
 import Foundation
 import AppKit
 import CoreGraphics
+import ApplicationServices
 
 final class ScreenshotManager {
     static let shared = ScreenshotManager()
 
     private init() {}
+
+    // MARK: - Accessibility Permission
+
+    /// Check if the app has Accessibility permission for CGEvent posting
+    private func checkAccessibilityPermission() -> Bool {
+        // Check without prompting (we'll handle the prompt ourselves)
+        let options: NSDictionary = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: false]
+        return AXIsProcessTrustedWithOptions(options)
+    }
+
+    /// Show alert guiding user to grant Accessibility permission
+    private func showAccessibilityPermissionAlert() {
+        DispatchQueue.main.async {
+            // Check if app is in foreground to avoid deadlock
+            if NSApplication.shared.isActive {
+                let alert = NSAlert()
+                alert.messageText = "Accessibility Permission Required"
+                alert.informativeText = """
+Auto-paste requires Accessibility permission to simulate keyboard events.
+
+Steps to enable:
+1. Open System Preferences → Security & Privacy
+2. Click Privacy tab → Accessibility
+3. Click the lock icon to make changes
+4. Enable "floatyclipshot" in the list
+
+Alternative: Use ⌘⇧F8 to capture without auto-paste.
+"""
+                alert.alertStyle = .informational
+                alert.addButton(withTitle: "Open System Preferences")
+                alert.addButton(withTitle: "Cancel")
+
+                if alert.runModal() == .alertFirstButtonReturn {
+                    // Open System Preferences to Accessibility pane
+                    if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+                        NSWorkspace.shared.open(url)
+                    }
+                }
+            } else {
+                // App in background - use notification
+                let notification = NSUserNotification()
+                notification.title = "Accessibility Permission Required"
+                notification.informativeText = "Auto-paste needs Accessibility permission. Check System Preferences → Security & Privacy → Accessibility"
+                notification.soundName = NSUserNotificationDefaultSoundName
+                NSUserNotificationCenter.default.deliver(notification)
+            }
+        }
+    }
 
     /// Capture the selected window or full screen and copy to clipboard
     func captureFullScreen() {
@@ -47,38 +96,139 @@ final class ScreenshotManager {
             }
         }
 
+        // CRITICAL: Capture current clipboard state BEFORE screenshot
+        let pasteboard = NSPasteboard.general
+        let initialChangeCount = pasteboard.changeCount
+
         runScreencapture(arguments: arguments) {
-            // Wait for clipboard to update, then simulate Command+V
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                self.simulatePaste()
+            // Poll clipboard until it updates (or timeout)
+            self.waitForClipboardUpdate(
+                initialChangeCount: initialChangeCount,
+                timeout: 2.0
+            ) { success in
+                if success {
+                    // Clipboard updated successfully - safe to paste
+                    DispatchQueue.main.async {
+                        let pasteSuccess = self.simulatePaste()
+                        if pasteSuccess {
+                            print("✅ Screenshot captured and pasted successfully")
+                        }
+                        // If paste failed, simulatePaste() already showed error
+                    }
+                } else {
+                    // Timeout - clipboard didn't update in time
+                    print("⚠️ Clipboard update timeout")
+                    DispatchQueue.main.async {
+                        self.showPasteFailureNotification(
+                            "Screenshot capture timed out. The screenshot may still be in clipboard - try pasting manually with ⌘V."
+                        )
+                    }
+                }
             }
         }
     }
 
+    /// Poll clipboard until it updates or timeout
+    /// - Parameters:
+    ///   - initialChangeCount: The changeCount before screenshot
+    ///   - timeout: Maximum time to wait (seconds)
+    ///   - completion: Called with true if clipboard updated, false if timeout
+    private func waitForClipboardUpdate(
+        initialChangeCount: Int,
+        timeout: TimeInterval,
+        completion: @escaping (Bool) -> Void
+    ) {
+        let startTime = Date()
+        let pollInterval: TimeInterval = 0.05  // Poll every 50ms
+
+        func poll() {
+            let pasteboard = NSPasteboard.general
+            let currentChangeCount = pasteboard.changeCount
+
+            // Success: Clipboard has been updated
+            if currentChangeCount > initialChangeCount {
+                let elapsed = Date().timeIntervalSince(startTime)
+                print("✅ Clipboard updated after \(String(format: "%.3f", elapsed))s")
+                completion(true)
+                return
+            }
+
+            // Timeout: Clipboard didn't update in time
+            if Date().timeIntervalSince(startTime) >= timeout {
+                print("⚠️ Clipboard polling timeout after \(timeout)s")
+                completion(false)
+                return
+            }
+
+            // Continue polling
+            DispatchQueue.main.asyncAfter(deadline: .now() + pollInterval) {
+                poll()
+            }
+        }
+
+        // Start polling after initial delay
+        DispatchQueue.main.asyncAfter(deadline: .now() + pollInterval) {
+            poll()
+        }
+    }
+
     /// Simulate Command+V keypress to paste clipboard content
-    private func simulatePaste() {
-        // Create Command key down event
-        let cmdDown = CGEvent(keyboardEventSource: nil, virtualKey: 0x37, keyDown: true)
-        cmdDown?.flags = .maskCommand
+    /// Returns true if paste events were posted successfully, false otherwise
+    @discardableResult
+    private func simulatePaste() -> Bool {
+        // CRITICAL: Check Accessibility permission first
+        guard checkAccessibilityPermission() else {
+            print("⚠️ Auto-paste failed: No Accessibility permission")
+            showAccessibilityPermissionAlert()
+            return false
+        }
 
-        // Create V key down event with Command modifier
-        let vDown = CGEvent(keyboardEventSource: nil, virtualKey: 0x09, keyDown: true)
-        vDown?.flags = .maskCommand
+        // Create all keyboard events with error checking
+        guard let cmdDown = CGEvent(keyboardEventSource: nil, virtualKey: 0x37, keyDown: true),
+              let vDown = CGEvent(keyboardEventSource: nil, virtualKey: 0x09, keyDown: true),
+              let vUp = CGEvent(keyboardEventSource: nil, virtualKey: 0x09, keyDown: false),
+              let cmdUp = CGEvent(keyboardEventSource: nil, virtualKey: 0x37, keyDown: false) else {
+            print("⚠️ Auto-paste failed: Could not create CGEvents")
+            showPasteFailureNotification("Failed to create keyboard events. Please paste manually with ⌘V.")
+            return false
+        }
 
-        // Create V key up event with Command modifier
-        let vUp = CGEvent(keyboardEventSource: nil, virtualKey: 0x09, keyDown: false)
-        vUp?.flags = .maskCommand
+        // Set command modifier flag on key events
+        cmdDown.flags = .maskCommand
+        vDown.flags = .maskCommand
+        vUp.flags = .maskCommand
+        // cmdUp doesn't need modifier (key is being released)
 
-        // Create Command key up event
-        let cmdUp = CGEvent(keyboardEventSource: nil, virtualKey: 0x37, keyDown: false)
+        // Post the keyboard events to simulate Command+V
+        cmdDown.post(tap: .cghidEventTap)
+        vDown.post(tap: .cghidEventTap)
+        vUp.post(tap: .cghidEventTap)
+        cmdUp.post(tap: .cghidEventTap)
 
-        // Post the events
-        cmdDown?.post(tap: .cghidEventTap)
-        vDown?.post(tap: .cghidEventTap)
-        vUp?.post(tap: .cghidEventTap)
-        cmdUp?.post(tap: .cghidEventTap)
+        print("✅ Auto-paste keyboard events posted successfully")
+        return true
+    }
 
-        print("✅ Auto-pasted screenshot")
+    /// Show notification/alert when paste operation fails
+    private func showPasteFailureNotification(_ message: String) {
+        DispatchQueue.main.async {
+            // Check if app is in foreground to avoid deadlock
+            if NSApplication.shared.isActive {
+                let alert = NSAlert()
+                alert.messageText = "Auto-Paste Failed"
+                alert.informativeText = message
+                alert.alertStyle = .warning
+                alert.addButton(withTitle: "OK")
+                alert.runModal()
+            } else {
+                // App in background - use notification
+                let notification = NSUserNotification()
+                notification.title = "Auto-Paste Failed"
+                notification.informativeText = message
+                notification.soundName = NSUserNotificationDefaultSoundName
+                NSUserNotificationCenter.default.deliver(notification)
+            }
+        }
     }
 
     /// Let user select a region and copy to clipboard
