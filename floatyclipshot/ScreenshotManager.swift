@@ -10,15 +10,31 @@ final class ScreenshotManager {
 
     // MARK: - Terminal Detection
 
-    /// Check if the frontmost (active) application is a terminal
+    /// Check if the target application is a terminal
+    /// Handles both button clicks (uses previous frontmost app) and hotkeys (uses current frontmost app)
     private func isFrontmostAppTerminal() -> Bool {
-        guard let frontmostApp = NSWorkspace.shared.frontmostApplication else {
-            print("⚠️ Terminal detection: No frontmost app detected")
+        let currentFrontmost = NSWorkspace.shared.frontmostApplication
+
+        // CRITICAL: If WE are frontmost (button click), use the PREVIOUS frontmost app
+        // If we're in background (hotkey), use the CURRENT frontmost app
+        let targetApp: NSRunningApplication?
+        if currentFrontmost?.bundleIdentifier == Bundle.main.bundleIdentifier {
+            // We're frontmost (button click) - use previous app
+            targetApp = WindowManager.shared.getPreviousFrontmostApp()
+            print("🔍 Terminal detection: Using PREVIOUS frontmost app (button click path)")
+        } else {
+            // We're in background (hotkey) - use current app
+            targetApp = currentFrontmost
+            print("🔍 Terminal detection: Using CURRENT frontmost app (hotkey path)")
+        }
+
+        guard let app = targetApp else {
+            print("⚠️ Terminal detection: No target app detected")
             return false
         }
 
-        let appName = frontmostApp.localizedName ?? "Unknown"
-        let bundleID = frontmostApp.bundleIdentifier ?? "Unknown"
+        let appName = app.localizedName ?? "Unknown"
+        let bundleID = app.bundleIdentifier ?? "Unknown"
 
         print("🔍 Terminal detection check:")
         print("   App: \(appName)")
@@ -37,7 +53,7 @@ final class ScreenshotManager {
             // Note: VS Code removed - users paste into markdown/comments more than terminal
         ]
 
-        if let bundleID = frontmostApp.bundleIdentifier {
+        if let bundleID = app.bundleIdentifier {
             let isTerminal = terminalBundleIDs.contains(bundleID)
             print("   Is terminal: \(isTerminal ? "✅ YES" : "❌ NO")")
             return isTerminal

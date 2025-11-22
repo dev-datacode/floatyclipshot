@@ -38,7 +38,20 @@ class WindowManager: ObservableObject {
     private var lastRefreshTime: Date?
     private let refreshDebounceInterval: TimeInterval = 0.5  // Minimum 0.5s between refreshes
 
+    // Track the previously frontmost app (before our window activated)
+    // This solves the focus race condition when user clicks the floating button
+    private var previousFrontmostApp: NSRunningApplication?
+
     private init() {
+        // Monitor frontmost app changes to track previous app
+        // This is critical for terminal detection when button is clicked
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(frontmostAppChanged),
+            name: NSWorkspace.didActivateApplicationNotification,
+            object: nil
+        )
+
         // Load saved window selection
         if let savedWindow = SettingsManager.shared.loadSelectedWindow() {
             // Verify the window still exists by refreshing the list first
@@ -51,6 +64,22 @@ class WindowManager: ObservableObject {
                 SettingsManager.shared.saveSelectedWindow(nil)
             }
         }
+    }
+
+    @objc private func frontmostAppChanged(_ notification: Notification) {
+        if let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication {
+            // Store previous frontmost app if it's NOT us
+            if app.bundleIdentifier != Bundle.main.bundleIdentifier {
+                previousFrontmostApp = app
+                print("🔄 Previous frontmost app: \(app.localizedName ?? "Unknown") (\(app.bundleIdentifier ?? "Unknown"))")
+            }
+        }
+    }
+
+    /// Get the app that was frontmost BEFORE we activated
+    /// Used for terminal detection when button is clicked (app becomes frontmost)
+    func getPreviousFrontmostApp() -> NSRunningApplication? {
+        return previousFrontmostApp
     }
 
     /// Get list of all capturable windows
