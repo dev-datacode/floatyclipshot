@@ -71,7 +71,14 @@ final class SettingsManager {
     // MARK: - Capture Hotkey Settings
 
     var hotkeyEnabled: Bool {
-        get { defaults.bool(forKey: Keys.hotkeyEnabled) }
+        get {
+            // Check if value has been set before
+            // If never set, default to ENABLED for better first-time user experience
+            if defaults.object(forKey: Keys.hotkeyEnabled) == nil {
+                return true  // ✅ Default to ENABLED for new users
+            }
+            return defaults.bool(forKey: Keys.hotkeyEnabled)
+        }
         set { defaults.set(newValue, forKey: Keys.hotkeyEnabled) }
     }
 
@@ -94,7 +101,14 @@ final class SettingsManager {
     // MARK: - Paste Hotkey Settings
 
     var pasteHotkeyEnabled: Bool {
-        get { defaults.bool(forKey: Keys.pasteHotkeyEnabled) }
+        get {
+            // Check if value has been set before
+            // If never set, default to ENABLED for better first-time user experience
+            if defaults.object(forKey: Keys.pasteHotkeyEnabled) == nil {
+                return true  // ✅ Default to ENABLED for new users
+            }
+            return defaults.bool(forKey: Keys.pasteHotkeyEnabled)
+        }
         set { defaults.set(newValue, forKey: Keys.pasteHotkeyEnabled) }
     }
 

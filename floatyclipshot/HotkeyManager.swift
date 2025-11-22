@@ -61,18 +61,30 @@ class HotkeyManager: ObservableObject {
         self.keyCode = settings.keyCode
         self.modifiers = settings.modifiers
 
+        print("🎹 Capture Hotkey Settings Loaded:")
+        print("   Enabled: \(isEnabled ? "✅ YES" : "❌ NO")")
+        print("   Hotkey: \(hotkeyDisplayString)")
+
         // Load saved settings for paste hotkey
         let pasteSettings = SettingsManager.shared.loadPasteHotkeySettings()
         self.pasteHotkeyEnabled = pasteSettings.enabled
         self.pasteKeyCode = pasteSettings.keyCode
         self.pasteModifiers = pasteSettings.modifiers
 
+        print("🎹 Paste Hotkey Settings Loaded:")
+        print("   Enabled: \(pasteHotkeyEnabled ? "✅ YES" : "❌ NO")")
+        print("   Hotkey: \(pasteHotkeyDisplayString)")
+
         // Register hotkeys if enabled
         if isEnabled {
             registerHotkey()
+        } else {
+            print("⚠️ Capture hotkey is DISABLED - enable via context menu or it will auto-enable on first launch")
         }
         if pasteHotkeyEnabled {
             registerPasteHotkey()
+        } else {
+            print("⚠️ Paste hotkey is DISABLED - enable via context menu or it will auto-enable on first launch")
         }
     }
 

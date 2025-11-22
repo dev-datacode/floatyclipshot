@@ -13,8 +13,16 @@ final class ScreenshotManager {
     /// Check if the frontmost (active) application is a terminal
     private func isFrontmostAppTerminal() -> Bool {
         guard let frontmostApp = NSWorkspace.shared.frontmostApplication else {
+            print("⚠️ Terminal detection: No frontmost app detected")
             return false
         }
+
+        let appName = frontmostApp.localizedName ?? "Unknown"
+        let bundleID = frontmostApp.bundleIdentifier ?? "Unknown"
+
+        print("🔍 Terminal detection check:")
+        print("   App: \(appName)")
+        print("   Bundle ID: \(bundleID)")
 
         // Known terminal app bundle IDs
         let terminalBundleIDs = [
@@ -30,9 +38,12 @@ final class ScreenshotManager {
         ]
 
         if let bundleID = frontmostApp.bundleIdentifier {
-            return terminalBundleIDs.contains(bundleID)
+            let isTerminal = terminalBundleIDs.contains(bundleID)
+            print("   Is terminal: \(isTerminal ? "✅ YES" : "❌ NO")")
+            return isTerminal
         }
 
+        print("   Is terminal: ❌ NO (no bundle ID)")
         return false
     }
 
@@ -110,13 +121,17 @@ Alternative: Use ⌘⇧F8 to capture without auto-paste.
 
     /// Capture the selected window or full screen, copy to clipboard, and auto-paste
     func captureAndPaste() {
+        print("📸 captureAndPaste() called")
+
         // SMART TERMINAL DETECTION: Check if target app is a terminal
         if isFrontmostAppTerminal() {
+            print("   ✅ Terminal detected - using file path mode")
             // Terminal detected - save to file and copy path instead
             captureAndPasteToTerminal()
             return
         }
 
+        print("   ℹ️ Non-terminal app - using clipboard mode")
         // Regular app - use clipboard + auto-paste
         var arguments = ["-x", "-c"]
 
