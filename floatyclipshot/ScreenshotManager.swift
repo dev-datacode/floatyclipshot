@@ -8,6 +8,34 @@ final class ScreenshotManager {
 
     private init() {}
 
+    // MARK: - Terminal Detection
+
+    /// Check if the frontmost (active) application is a terminal
+    private func isFrontmostAppTerminal() -> Bool {
+        guard let frontmostApp = NSWorkspace.shared.frontmostApplication else {
+            return false
+        }
+
+        // Known terminal app bundle IDs
+        let terminalBundleIDs = [
+            "com.apple.Terminal",           // Terminal.app
+            "com.googlecode.iterm2",        // iTerm2
+            "org.alacritty",                // Alacritty
+            "net.kovidgoyal.kitty",         // Kitty
+            "co.zeit.hyper",                // Hyper
+            "dev.warp.Warp-Stable",         // Warp
+            "com.github.wez.wezterm",       // WezTerm
+            "io.terminus",                  // Terminus
+            "com.microsoft.VSCode"          // VS Code (has integrated terminal)
+        ]
+
+        if let bundleID = frontmostApp.bundleIdentifier {
+            return terminalBundleIDs.contains(bundleID)
+        }
+
+        return false
+    }
+
     // MARK: - Accessibility Permission
 
     /// Check if the app has Accessibility permission for CGEvent posting
@@ -82,6 +110,14 @@ Alternative: Use ⌘⇧F8 to capture without auto-paste.
 
     /// Capture the selected window or full screen, copy to clipboard, and auto-paste
     func captureAndPaste() {
+        // SMART TERMINAL DETECTION: Check if target app is a terminal
+        if isFrontmostAppTerminal() {
+            // Terminal detected - save to file and copy path instead
+            captureAndPasteToTerminal()
+            return
+        }
+
+        // Regular app - use clipboard + auto-paste
         var arguments = ["-x", "-c"]
 
         // If a window is selected, capture only that window
@@ -124,6 +160,74 @@ Alternative: Use ⌘⇧F8 to capture without auto-paste.
                         )
                     }
                 }
+            }
+        }
+    }
+
+    /// Special handling for terminal apps - save to Desktop and copy file path
+    private func captureAndPasteToTerminal() {
+        // Generate filename with timestamp
+        let fileName = "Screenshot-\(dateFormatter.string(from: Date())).png"
+        let desktopPath = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Desktop/\(fileName)")
+
+        var arguments = ["-x", desktopPath.path]
+
+        // If a window is selected, capture only that window
+        if let window = WindowManager.shared.selectedWindow {
+            if WindowManager.shared.isWindowValid(window) {
+                arguments.insert("-l\(window.id)", at: 0)
+            } else {
+                WindowManager.shared.clearSelection()
+                showWindowClosedAlert()
+            }
+        }
+
+        // Save screenshot to Desktop
+        runScreencapture(arguments: arguments) {
+            // Copy file path to clipboard for pasting in terminal
+            DispatchQueue.main.async {
+                let pasteboard = NSPasteboard.general
+                pasteboard.clearContents()
+                pasteboard.setString(desktopPath.path, forType: .string)
+
+                // Show success notification
+                self.showTerminalPasteNotification(fileName: fileName, path: desktopPath.path)
+
+                // Also simulate paste to insert path into terminal
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    _ = self.simulatePaste()
+                }
+            }
+        }
+    }
+
+    /// Show notification when saving screenshot for terminal
+    private func showTerminalPasteNotification(fileName: String, path: String) {
+        DispatchQueue.main.async {
+            if NSApplication.shared.isActive {
+                let alert = NSAlert()
+                alert.messageText = "Screenshot Saved for Terminal"
+                alert.informativeText = """
+Saved to Desktop: \(fileName)
+
+File path copied to clipboard - paste in terminal with ⌘V.
+
+(Terminals only accept text, not images)
+"""
+                alert.alertStyle = .informational
+                alert.addButton(withTitle: "OK")
+                alert.addButton(withTitle: "Open Desktop Folder")
+
+                if alert.runModal() == .alertSecondButtonReturn {
+                    // Open Desktop folder
+                    NSWorkspace.shared.selectFile(path, inFileViewerRootedAtPath: "")
+                }
+            } else {
+                let notification = NSUserNotification()
+                notification.title = "Screenshot Saved for Terminal"
+                notification.informativeText = "📁 \(fileName) → File path copied to clipboard"
+                notification.soundName = NSUserNotificationDefaultSoundName
+                NSUserNotificationCenter.default.deliver(notification)
             }
         }
     }
