@@ -232,13 +232,17 @@ Alternative: Use ⌘⇧F8 to capture without auto-paste.
                     pasteboard.clearContents()
                     pasteboard.setString(desktopPath.path, forType: .string)
 
+                    print("✅ File path copied to clipboard: \(desktopPath.path)")
+                    print("   User can paste with Cmd+V in terminal")
+
                     // Show success notification
                     self.showTerminalPasteNotification(fileName: fileName, path: desktopPath.path)
 
-                    // Also simulate paste to insert path into terminal
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                        _ = self.simulatePaste()
-                    }
+                    // NOTE: We do NOT auto-paste for terminals because:
+                    // 1. Modal alert makes us frontmost → Cmd+V goes to our window, not terminal
+                    // 2. User must manually paste with Cmd+V (clipboard has correct path)
+                    // 3. Alert message tells user to "paste in terminal with ⌘V"
+                    // This is 100% reliable vs auto-paste which fails due to focus issues
                 }
             }
         }
@@ -328,6 +332,18 @@ File path copied to clipboard - paste in terminal with ⌘V.
             print("⚠️ Auto-paste failed: No Accessibility permission")
             showAccessibilityPermissionAlert()
             return false
+        }
+
+        // DEBUG: Check which app will receive the paste
+        print("🔍 Auto-paste target check:")
+        if let frontmost = NSWorkspace.shared.frontmostApplication {
+            print("   Frontmost app: \(frontmost.localizedName ?? "Unknown")")
+            print("   Bundle ID: \(frontmost.bundleIdentifier ?? "Unknown")")
+            if frontmost.bundleIdentifier == Bundle.main.bundleIdentifier {
+                print("   ⚠️ WARNING: We are frontmost! Cmd+V will paste to ourselves, not target app!")
+            }
+        } else {
+            print("   ⚠️ No frontmost app detected")
         }
 
         // Create all keyboard events with error checking
