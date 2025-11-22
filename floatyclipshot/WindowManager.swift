@@ -136,6 +136,14 @@ class WindowManager: ObservableObject {
     func selectWindow(_ window: WindowInfo?) {
         DispatchQueue.main.async { [weak self] in
             self?.selectedWindow = window
+
+            if let window = window {
+                print("🎯 Window selected: \(window.displayName) (ID: \(window.id))")
+                print("   Bounds: \(window.bounds)")
+            } else {
+                print("🎯 Window selection cleared (back to full screen)")
+            }
+
             // Save to settings
             SettingsManager.shared.saveSelectedWindow(window)
         }
@@ -154,19 +162,23 @@ class WindowManager: ObservableObject {
         return "🖥️ Full Screen"
     }
 
-    /// Check if a window still exists
+    /// Check if a window still exists (checks ALL desktops, not just current one)
     func isWindowValid(_ window: WindowInfo) -> Bool {
-        guard let windowList = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] else {
+        // Use .optionAll to check windows on ALL desktops/Spaces (must match refreshWindowList)
+        guard let windowList = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else {
+            print("⚠️ Window validation: Failed to get window list")
             return false
         }
 
         for windowDict in windowList {
             if let windowID = windowDict[kCGWindowNumber as String] as? Int,
                windowID == window.id {
+                print("✅ Window validation: Window \(window.id) (\(window.displayName)) still exists")
                 return true
             }
         }
 
+        print("⚠️ Window validation: Window \(window.id) (\(window.displayName)) not found (may have been closed)")
         return false
     }
 }
