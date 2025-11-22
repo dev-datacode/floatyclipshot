@@ -43,6 +43,15 @@ class WindowManager: ObservableObject {
     private var previousFrontmostApp: NSRunningApplication?
 
     private init() {
+        // CRITICAL: Capture current frontmost app BEFORE we activate
+        // This handles "first click after launch" scenario where user clicks button immediately
+        // Without this, previousFrontmostApp would be nil on first click
+        if let currentApp = NSWorkspace.shared.frontmostApplication,
+           currentApp.bundleIdentifier != Bundle.main.bundleIdentifier {
+            previousFrontmostApp = currentApp
+            print("🔄 Initial frontmost app (at launch): \(currentApp.localizedName ?? "Unknown") (\(currentApp.bundleIdentifier ?? "Unknown"))")
+        }
+
         // Monitor frontmost app changes to track previous app
         // This is critical for terminal detection when button is clicked
         NSWorkspace.shared.notificationCenter.addObserver(
