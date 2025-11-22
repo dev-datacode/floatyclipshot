@@ -14,6 +14,7 @@ import Combine
 class HotkeyManager: ObservableObject {
     static let shared = HotkeyManager()
 
+    // MARK: - Capture Hotkey (Default: Cmd+Shift+F8)
     @Published var isEnabled: Bool = false {
         didSet {
             if isEnabled {
@@ -33,20 +34,49 @@ class HotkeyManager: ObservableObject {
     @Published var keyCode: UInt32 = 100 // F8 key code
     @Published var modifiers: UInt32 = UInt32(cmdKey | shiftKey) // Command + Shift
 
+    // MARK: - Capture & Paste Hotkey (Default: Cmd+Shift+F10)
+    @Published var pasteHotkeyEnabled: Bool = false {
+        didSet {
+            if pasteHotkeyEnabled {
+                registerPasteHotkey()
+            } else {
+                unregisterPasteHotkey()
+            }
+            // Save to settings
+            SettingsManager.shared.pasteHotkeyEnabled = pasteHotkeyEnabled
+        }
+    }
+
+    private var pasteHotKeyRef: EventHotKeyRef?
+    private var pasteEventHandler: EventHandlerRef?
+
+    // Default: Command + Shift + F10
+    @Published var pasteKeyCode: UInt32 = 109 // F10 key code
+    @Published var pasteModifiers: UInt32 = UInt32(cmdKey | shiftKey) // Command + Shift
+
     private init() {
-        // Load saved settings
+        // Load saved settings for capture hotkey
         let settings = SettingsManager.shared.loadHotkeySettings()
         self.isEnabled = settings.enabled
         self.keyCode = settings.keyCode
         self.modifiers = settings.modifiers
 
-        // Register hotkey if enabled
+        // Load saved settings for paste hotkey
+        let pasteSettings = SettingsManager.shared.loadPasteHotkeySettings()
+        self.pasteHotkeyEnabled = pasteSettings.enabled
+        self.pasteKeyCode = pasteSettings.keyCode
+        self.pasteModifiers = pasteSettings.modifiers
+
+        // Register hotkeys if enabled
         if isEnabled {
             registerHotkey()
         }
+        if pasteHotkeyEnabled {
+            registerPasteHotkey()
+        }
     }
 
-    /// Update hotkey to a new key combination
+    /// Update capture hotkey to a new key combination
     func updateHotkey(keyCode: UInt32, modifiers: UInt32) {
         self.keyCode = keyCode
         self.modifiers = modifiers
@@ -61,6 +91,24 @@ class HotkeyManager: ObservableObject {
         // Re-register if hotkey is enabled
         if isEnabled {
             registerHotkey()
+        }
+    }
+
+    /// Update paste hotkey to a new key combination
+    func updatePasteHotkey(keyCode: UInt32, modifiers: UInt32) {
+        self.pasteKeyCode = keyCode
+        self.pasteModifiers = modifiers
+
+        // Save to settings
+        SettingsManager.shared.savePasteHotkeySettings(
+            enabled: pasteHotkeyEnabled,
+            keyCode: keyCode,
+            modifiers: modifiers
+        )
+
+        // Re-register if hotkey is enabled
+        if pasteHotkeyEnabled {
+            registerPasteHotkey()
         }
     }
 
@@ -127,6 +175,85 @@ class HotkeyManager: ObservableObject {
         }
     }
 
+    // MARK: - Paste Hotkey Registration
+
+    func registerPasteHotkey() {
+        // Unregister existing paste hotkey first
+        unregisterPasteHotkey()
+
+        // Create event type
+        var eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
+
+        // Install event handler for paste hotkey
+        _ = InstallEventHandler(GetApplicationEventTarget(), { (nextHandler, theEvent, userData) -> OSStatus in
+            // Get the hotkey ID to determine which hotkey was pressed
+            var hotKeyID = EventHotKeyID()
+            let status = GetEventParameter(
+                theEvent,
+                EventParamName(kEventParamDirectObject),
+                EventParamType(typeEventHotKeyID),
+                nil,
+                MemoryLayout<EventHotKeyID>.size,
+                nil,
+                &hotKeyID
+            )
+
+            if status == noErr && hotKeyID.id == 2 {
+                // Paste hotkey was pressed
+                DispatchQueue.main.async {
+                    // Show visual feedback
+                    NotificationCenter.default.post(name: NSNotification.Name("TriggerCaptureAnimation"), object: nil)
+
+                    // Capture screenshot and auto-paste
+                    ScreenshotManager.shared.captureAndPaste()
+                }
+            }
+            return noErr
+        }, 1, &eventType, nil, &pasteEventHandler)
+
+        // Register paste hotkey with ID = 2
+        let hotKeyID = EventHotKeyID(signature: fourCharCode("FLCP"), id: 2)
+        let status = RegisterEventHotKey(pasteKeyCode, pasteModifiers, hotKeyID, GetApplicationEventTarget(), 0, &pasteHotKeyRef)
+
+        if status != noErr {
+            // Clean up event handler if hotkey registration failed
+            if let eventHandler = pasteEventHandler {
+                RemoveEventHandler(eventHandler)
+                self.pasteEventHandler = nil
+            }
+
+            print("⚠️ Failed to register paste hotkey: \(status)")
+
+            // Show user-facing error
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                let alert = NSAlert()
+                alert.messageText = "Paste Hotkey Registration Failed"
+                alert.informativeText = "Could not register \(self.pasteHotkeyDisplayString). This hotkey may be in use by another application. Please choose a different key combination."
+                alert.alertStyle = .warning
+                alert.addButton(withTitle: "OK")
+                alert.runModal()
+
+                // Disable hotkey since it failed
+                self.pasteHotkeyEnabled = false
+            }
+        } else {
+            print("✅ Paste hotkey registered successfully: \(pasteHotkeyDisplayString)")
+        }
+    }
+
+    func unregisterPasteHotkey() {
+        if let pasteHotKeyRef = pasteHotKeyRef {
+            UnregisterEventHotKey(pasteHotKeyRef)
+            self.pasteHotKeyRef = nil
+        }
+
+        if let pasteEventHandler = pasteEventHandler {
+            RemoveEventHandler(pasteEventHandler)
+            self.pasteEventHandler = nil
+        }
+    }
+
     // Helper function to convert string to FourCharCode
     private func fourCharCode(_ string: String) -> FourCharCode {
         assert(string.count == 4, "String must be exactly 4 characters")
@@ -137,7 +264,7 @@ class HotkeyManager: ObservableObject {
         return result
     }
 
-    // Get display string for current hotkey
+    // Get display string for current capture hotkey
     var hotkeyDisplayString: String {
         var keys: [String] = []
 
@@ -156,6 +283,29 @@ class HotkeyManager: ObservableObject {
 
         // Add key name
         keys.append(keyCodeToString(keyCode))
+
+        return keys.joined(separator: " ")
+    }
+
+    // Get display string for current paste hotkey
+    var pasteHotkeyDisplayString: String {
+        var keys: [String] = []
+
+        if pasteModifiers & UInt32(cmdKey) != 0 {
+            keys.append("⌘")
+        }
+        if pasteModifiers & UInt32(shiftKey) != 0 {
+            keys.append("⇧")
+        }
+        if pasteModifiers & UInt32(optionKey) != 0 {
+            keys.append("⌥")
+        }
+        if pasteModifiers & UInt32(controlKey) != 0 {
+            keys.append("⌃")
+        }
+
+        // Add key name
+        keys.append(keyCodeToString(pasteKeyCode))
 
         return keys.joined(separator: " ")
     }

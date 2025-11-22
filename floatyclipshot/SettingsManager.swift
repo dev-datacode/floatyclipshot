@@ -45,21 +45,30 @@ final class SettingsManager {
 
     // Keys for UserDefaults
     private enum Keys {
+        // Capture hotkey
         static let hotkeyEnabled = "hotkeyEnabled"
         static let hotkeyKeyCode = "hotkeyKeyCode"
         static let hotkeyModifiers = "hotkeyModifiers"
+        // Paste hotkey
+        static let pasteHotkeyEnabled = "pasteHotkeyEnabled"
+        static let pasteHotkeyKeyCode = "pasteHotkeyKeyCode"
+        static let pasteHotkeyModifiers = "pasteHotkeyModifiers"
+        // Window selection
         static let selectedWindowID = "selectedWindowID"
         static let selectedWindowName = "selectedWindowName"
         static let selectedWindowOwner = "selectedWindowOwner"
+        // UI
         static let buttonPositionX = "buttonPositionX"
         static let buttonPositionY = "buttonPositionY"
+        // Storage
         static let storageLimit = "storageLimit"
+        // Privacy
         static let privacyWarningShown = "privacyWarningShown"
     }
 
     private init() {}
 
-    // MARK: - Hotkey Settings
+    // MARK: - Capture Hotkey Settings
 
     var hotkeyEnabled: Bool {
         get { defaults.bool(forKey: Keys.hotkeyEnabled) }
@@ -80,6 +89,29 @@ final class SettingsManager {
             return value == 0 ? UInt32(cmdKey | shiftKey) : UInt32(value) // Default to Cmd+Shift
         }
         set { defaults.set(Int(newValue), forKey: Keys.hotkeyModifiers) }
+    }
+
+    // MARK: - Paste Hotkey Settings
+
+    var pasteHotkeyEnabled: Bool {
+        get { defaults.bool(forKey: Keys.pasteHotkeyEnabled) }
+        set { defaults.set(newValue, forKey: Keys.pasteHotkeyEnabled) }
+    }
+
+    var pasteHotkeyKeyCode: UInt32 {
+        get {
+            let value = defaults.integer(forKey: Keys.pasteHotkeyKeyCode)
+            return value == 0 ? 109 : UInt32(value) // Default to F10 (109)
+        }
+        set { defaults.set(Int(newValue), forKey: Keys.pasteHotkeyKeyCode) }
+    }
+
+    var pasteHotkeyModifiers: UInt32 {
+        get {
+            let value = defaults.integer(forKey: Keys.pasteHotkeyModifiers)
+            return value == 0 ? UInt32(cmdKey | shiftKey) : UInt32(value) // Default to Cmd+Shift
+        }
+        set { defaults.set(Int(newValue), forKey: Keys.pasteHotkeyModifiers) }
     }
 
     // MARK: - Window Selection Settings
@@ -166,6 +198,12 @@ final class SettingsManager {
         hotkeyModifiers = modifiers
     }
 
+    func savePasteHotkeySettings(enabled: Bool, keyCode: UInt32, modifiers: UInt32) {
+        pasteHotkeyEnabled = enabled
+        pasteHotkeyKeyCode = keyCode
+        pasteHotkeyModifiers = modifiers
+    }
+
     func saveSelectedWindow(_ window: WindowInfo?) {
         if let window = window {
             selectedWindowID = window.id
@@ -186,6 +224,10 @@ final class SettingsManager {
 
     func loadHotkeySettings() -> (enabled: Bool, keyCode: UInt32, modifiers: UInt32) {
         return (hotkeyEnabled, hotkeyKeyCode, hotkeyModifiers)
+    }
+
+    func loadPasteHotkeySettings() -> (enabled: Bool, keyCode: UInt32, modifiers: UInt32) {
+        return (pasteHotkeyEnabled, pasteHotkeyKeyCode, pasteHotkeyModifiers)
     }
 
     func loadSelectedWindow() -> WindowInfo? {
@@ -224,6 +266,9 @@ final class SettingsManager {
         defaults.removeObject(forKey: Keys.hotkeyEnabled)
         defaults.removeObject(forKey: Keys.hotkeyKeyCode)
         defaults.removeObject(forKey: Keys.hotkeyModifiers)
+        defaults.removeObject(forKey: Keys.pasteHotkeyEnabled)
+        defaults.removeObject(forKey: Keys.pasteHotkeyKeyCode)
+        defaults.removeObject(forKey: Keys.pasteHotkeyModifiers)
         defaults.removeObject(forKey: Keys.selectedWindowID)
         defaults.removeObject(forKey: Keys.selectedWindowName)
         defaults.removeObject(forKey: Keys.selectedWindowOwner)

@@ -16,6 +16,7 @@ struct FloatingButtonView: View {
     @ObservedObject private var notesManager = NotesManager.shared
     @State private var showCaptureAnimation = false
     @State private var showHotkeyRecorder = false
+    @State private var showPasteHotkeyRecorder = false
     @State private var showStorageSettings = false
     @State private var showQuickNote = false
     @State private var showNotesList = false
@@ -171,7 +172,7 @@ struct FloatingButtonView: View {
             // Keyboard shortcut section
             Toggle(isOn: $hotkeyManager.isEnabled) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Global Hotkey")
+                    Text("Capture Hotkey")
                         .font(.body)
                     if hotkeyManager.isEnabled {
                         Text(hotkeyManager.hotkeyDisplayString)
@@ -185,8 +186,29 @@ struct FloatingButtonView: View {
                 }
             }
 
-            Button("Change Hotkey...") {
+            Button("Change Capture Hotkey...") {
                 showHotkeyRecorder = true
+            }
+
+            // Paste hotkey section
+            Toggle(isOn: $hotkeyManager.pasteHotkeyEnabled) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Capture & Paste Hotkey")
+                        .font(.body)
+                    if hotkeyManager.pasteHotkeyEnabled {
+                        Text(hotkeyManager.pasteHotkeyDisplayString)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    } else {
+                        Text("Disabled")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+            }
+
+            Button("Change Paste Hotkey...") {
+                showPasteHotkeyRecorder = true
             }
 
             Divider()
@@ -198,6 +220,9 @@ struct FloatingButtonView: View {
         }
         .sheet(isPresented: $showHotkeyRecorder) {
             HotkeyRecorderView()
+        }
+        .sheet(isPresented: $showPasteHotkeyRecorder) {
+            PasteHotkeyRecorderView()
         }
         .sheet(isPresented: $showStorageSettings) {
             StorageSettingsView()

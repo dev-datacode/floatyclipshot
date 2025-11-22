@@ -1,5 +1,6 @@
 import Foundation
 import AppKit
+import CoreGraphics
 
 final class ScreenshotManager {
     static let shared = ScreenshotManager()
@@ -28,6 +29,56 @@ final class ScreenshotManager {
                 // The ClipboardManager will automatically detect this change
             }
         }
+    }
+
+    /// Capture the selected window or full screen, copy to clipboard, and auto-paste
+    func captureAndPaste() {
+        var arguments = ["-x", "-c"]
+
+        // If a window is selected, capture only that window
+        if let window = WindowManager.shared.selectedWindow {
+            // Check if window still exists
+            if WindowManager.shared.isWindowValid(window) {
+                arguments.insert("-l\(window.id)", at: 0)
+            } else {
+                // Window no longer exists, clear selection and capture full screen
+                WindowManager.shared.clearSelection()
+                showWindowClosedAlert()
+            }
+        }
+
+        runScreencapture(arguments: arguments) {
+            // Wait for clipboard to update, then simulate Command+V
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                self.simulatePaste()
+            }
+        }
+    }
+
+    /// Simulate Command+V keypress to paste clipboard content
+    private func simulatePaste() {
+        // Create Command key down event
+        let cmdDown = CGEvent(keyboardEventSource: nil, virtualKey: 0x37, keyDown: true)
+        cmdDown?.flags = .maskCommand
+
+        // Create V key down event with Command modifier
+        let vDown = CGEvent(keyboardEventSource: nil, virtualKey: 0x09, keyDown: true)
+        vDown?.flags = .maskCommand
+
+        // Create V key up event with Command modifier
+        let vUp = CGEvent(keyboardEventSource: nil, virtualKey: 0x09, keyDown: false)
+        vUp?.flags = .maskCommand
+
+        // Create Command key up event
+        let cmdUp = CGEvent(keyboardEventSource: nil, virtualKey: 0x37, keyDown: false)
+
+        // Post the events
+        cmdDown?.post(tap: .cghidEventTap)
+        vDown?.post(tap: .cghidEventTap)
+        vUp?.post(tap: .cghidEventTap)
+        cmdUp?.post(tap: .cghidEventTap)
+
+        print("✅ Auto-pasted screenshot")
     }
 
     /// Let user select a region and copy to clipboard
