@@ -64,7 +64,9 @@ class WindowManager: ObservableObject {
 
         lastRefreshTime = Date()
 
-        guard let windowList = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else {
+        // Use .optionAll to get windows from ALL desktops/Spaces, not just current one
+        // This allows users to select windows on other desktops
+        guard let windowList = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else {
             print("⚠️ Failed to get window list from CGWindowListCopyWindowInfo")
             availableWindows = []
             return
@@ -95,8 +97,15 @@ class WindowManager: ObservableObject {
             let height = boundsDict["Height"] as? CGFloat ?? 0
             let bounds = CGRect(x: x, y: y, width: width, height: height)
 
-            // Skip very small windows (likely UI elements)
+            // Skip very small windows (likely UI elements or minimized windows)
+            // Minimized windows often have width/height of 0 or very small values
             if width < 100 || height < 100 {
+                continue
+            }
+
+            // Skip windows with suspicious bounds (off-screen by large amounts)
+            // This catches some hidden/minimized windows that slip through
+            if abs(x) > 100000 || abs(y) > 100000 {
                 continue
             }
 
