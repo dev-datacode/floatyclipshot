@@ -15,6 +15,8 @@ struct FloatingButtonView: View {
     @ObservedObject private var hotkeyManager = HotkeyManager.shared
     @ObservedObject private var notesManager = NotesManager.shared
     @State private var showCaptureAnimation = false
+    @State private var showGlassyFeedback = false
+    @State private var showCheckmark = false
     @State private var showHotkeyRecorder = false
     @State private var showPasteHotkeyRecorder = false
     @State private var showStorageSettings = false
@@ -23,6 +25,7 @@ struct FloatingButtonView: View {
 
     var body: some View {
         ZStack {
+            // Main button
             Circle()
                 .fill(buttonColor)
                 .frame(width: 80, height: 80)
@@ -30,9 +33,41 @@ struct FloatingButtonView: View {
                 .scaleEffect(showCaptureAnimation ? 0.9 : 1.0)
                 .animation(.easeInOut(duration: 0.1), value: showCaptureAnimation)
 
+            // Button icon
             Image(systemName: buttonIcon)
                 .font(.system(size: 24, weight: .medium))
                 .foregroundColor(.white)
+
+            // Apple-like glassy feedback overlay
+            if showGlassyFeedback {
+                Circle()
+                    .fill(
+                        LinearGradient(
+                            gradient: Gradient(colors: [
+                                Color.white.opacity(0.8),
+                                Color.white.opacity(0.4)
+                            ]),
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .frame(width: 80, height: 80)
+                    .scaleEffect(showGlassyFeedback ? 1.5 : 0.5)
+                    .opacity(showGlassyFeedback ? 0 : 1)
+                    .animation(.easeOut(duration: 0.5), value: showGlassyFeedback)
+                    .blur(radius: 8)
+            }
+
+            // Success checkmark
+            if showCheckmark {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 40, weight: .bold))
+                    .foregroundColor(.white)
+                    .shadow(color: .black.opacity(0.3), radius: 4, x: 0, y: 2)
+                    .scaleEffect(showCheckmark ? 1.0 : 0.5)
+                    .opacity(showCheckmark ? 1 : 0)
+                    .animation(.spring(response: 0.3, dampingFraction: 0.6, blendDuration: 0), value: showCheckmark)
+            }
         }
         .padding(12)
         .contentShape(Circle()) // Make entire circle clickable
@@ -43,6 +78,10 @@ struct FloatingButtonView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("TriggerCaptureAnimation"))) { _ in
             // Triggered by keyboard shortcut
             triggerCaptureAnimation()
+        }
+        .onAppear {
+            // FIX: Refresh window list when app launches to populate initial list
+            windowManager.refreshWindowList()
         }
         .help(tooltipText)
         .contextMenu {
@@ -242,11 +281,31 @@ struct FloatingButtonView: View {
         ScreenshotManager.shared.captureFullScreen()
     }
 
-    // Just the animation (for keyboard shortcut feedback)
+    // Smooth Apple-like capture animation (for keyboard shortcut feedback)
     private func triggerCaptureAnimation() {
+        // Button squeeze
         showCaptureAnimation = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
             showCaptureAnimation = false
+        }
+
+        // Glassy feedback - starts immediately and expands/fades out
+        showGlassyFeedback = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            // Trigger the expansion/fade animation
+            showGlassyFeedback = false
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+            // Clean up after animation completes
+            showGlassyFeedback = false
+        }
+
+        // Success checkmark - appears with spring animation
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            showCheckmark = true
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.75) {
+            showCheckmark = false
         }
     }
 
