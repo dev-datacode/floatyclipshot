@@ -17,6 +17,7 @@ struct FloatingButtonView: View {
     @State private var showCaptureAnimation = false
     @State private var showGlassyFeedback = false
     @State private var showCheckmark = false
+    @State private var isAnimating = false
     @State private var showHotkeyRecorder = false
     @State private var showPasteHotkeyRecorder = false
     @State private var showStorageSettings = false
@@ -283,6 +284,10 @@ struct FloatingButtonView: View {
 
     // Smooth Apple-like capture animation (for keyboard shortcut feedback)
     private func triggerCaptureAnimation() {
+        // Prevent overlapping animations
+        guard !isAnimating else { return }
+        isAnimating = true
+
         // Button squeeze
         showCaptureAnimation = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
@@ -295,10 +300,6 @@ struct FloatingButtonView: View {
             // Trigger the expansion/fade animation
             showGlassyFeedback = false
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-            // Clean up after animation completes
-            showGlassyFeedback = false
-        }
 
         // Success checkmark - appears with spring animation
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
@@ -306,6 +307,8 @@ struct FloatingButtonView: View {
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.75) {
             showCheckmark = false
+            // Release animation lock after animation completes
+            self.isAnimating = false
         }
     }
 

@@ -25,8 +25,8 @@ final class ScreenshotManager {
             "co.zeit.hyper",                // Hyper
             "dev.warp.Warp-Stable",         // Warp
             "com.github.wez.wezterm",       // WezTerm
-            "io.terminus",                  // Terminus
-            "com.microsoft.VSCode"          // VS Code (has integrated terminal)
+            "io.terminus"                   // Terminus
+            // Note: VS Code removed - users paste into markdown/comments more than terminal
         ]
 
         if let bundleID = frontmostApp.bundleIdentifier {
@@ -184,18 +184,30 @@ Alternative: Use ⌘⇧F8 to capture without auto-paste.
 
         // Save screenshot to Desktop
         runScreencapture(arguments: arguments) {
-            // Copy file path to clipboard for pasting in terminal
+            // Verify file was created before proceeding
             DispatchQueue.main.async {
-                let pasteboard = NSPasteboard.general
-                pasteboard.clearContents()
-                pasteboard.setString(desktopPath.path, forType: .string)
+                // Add small delay to ensure file system has written the file
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                    guard FileManager.default.fileExists(atPath: desktopPath.path) else {
+                        print("⚠️ Screenshot save failed - file not created at \(desktopPath.path)")
+                        self.showPasteFailureNotification(
+                            "Failed to save screenshot to Desktop. Check disk space and permissions."
+                        )
+                        return
+                    }
 
-                // Show success notification
-                self.showTerminalPasteNotification(fileName: fileName, path: desktopPath.path)
+                    // Copy file path to clipboard for pasting in terminal
+                    let pasteboard = NSPasteboard.general
+                    pasteboard.clearContents()
+                    pasteboard.setString(desktopPath.path, forType: .string)
 
-                // Also simulate paste to insert path into terminal
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                    _ = self.simulatePaste()
+                    // Show success notification
+                    self.showTerminalPasteNotification(fileName: fileName, path: desktopPath.path)
+
+                    // Also simulate paste to insert path into terminal
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        _ = self.simulatePaste()
+                    }
                 }
             }
         }
@@ -386,7 +398,7 @@ File path copied to clipboard - paste in terminal with ⌘V.
     /// Date formatter for screenshot filenames
     private let dateFormatter: DateFormatter = {
         let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd-HH-mm-ss"
+        formatter.dateFormat = "yyyy-MM-dd-HH-mm-ss-SSS"  // Added milliseconds to prevent collisions
         return formatter
     }()
 

@@ -34,6 +34,10 @@ class WindowManager: ObservableObject {
     @Published var selectedWindow: WindowInfo?
     @Published var availableWindows: [WindowInfo] = []
 
+    // Debouncing: Track last refresh time to avoid excessive refreshes
+    private var lastRefreshTime: Date?
+    private let refreshDebounceInterval: TimeInterval = 0.5  // Minimum 0.5s between refreshes
+
     private init() {
         // Load saved window selection
         if let savedWindow = SettingsManager.shared.loadSelectedWindow() {
@@ -51,7 +55,17 @@ class WindowManager: ObservableObject {
 
     /// Get list of all capturable windows
     func refreshWindowList() {
+        // Debounce: Skip if refreshed in last 0.5 seconds
+        if let lastRefresh = lastRefreshTime,
+           Date().timeIntervalSince(lastRefresh) < refreshDebounceInterval {
+            print("⏭️ Skipping window refresh (debounced - last refresh \(String(format: "%.2f", Date().timeIntervalSince(lastRefresh)))s ago)")
+            return
+        }
+
+        lastRefreshTime = Date()
+
         guard let windowList = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else {
+            print("⚠️ Failed to get window list from CGWindowListCopyWindowInfo")
             availableWindows = []
             return
         }
