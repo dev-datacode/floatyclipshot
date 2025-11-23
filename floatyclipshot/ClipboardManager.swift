@@ -20,8 +20,25 @@ struct ClipboardItem: Identifiable, Equatable, Codable {
     let type: ClipboardItemType
     let windowContext: String? // Name of the window/app that was captured
     let dataSize: Int64 // Size in bytes
+    var isFavorite: Bool = false
 
-    init(id: UUID = UUID(), fileURL: URL? = nil, textContent: String? = nil, dataType: NSPasteboard.PasteboardType, timestamp: Date, type: ClipboardItemType, windowContext: String?, dataSize: Int64) {
+    // Custom decoding to handle old data where isFavorite might be missing
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        fileURL = try container.decodeIfPresent(URL.self, forKey: .fileURL)
+        textContent = try container.decodeIfPresent(String.self, forKey: .textContent)
+        dataType = try container.decode(String.self, forKey: .dataType)
+        timestamp = try container.decode(Date.self, forKey: .timestamp)
+        type = try container.decode(ClipboardItemType.self, forKey: .type)
+        windowContext = try container.decodeIfPresent(String.self, forKey: .windowContext)
+        dataSize = try container.decode(Int64.self, forKey: .dataSize)
+        // Handle missing key for isFavorite (default to false)
+        isFavorite = try container.decodeIfPresent(Bool.self, forKey: .isFavorite) ?? false
+    }
+    
+    // Default initializer
+    init(id: UUID = UUID(), fileURL: URL? = nil, textContent: String? = nil, dataType: NSPasteboard.PasteboardType, timestamp: Date, type: ClipboardItemType, windowContext: String?, dataSize: Int64, isFavorite: Bool = false) {
         self.id = id
         self.fileURL = fileURL
         self.textContent = textContent
@@ -30,6 +47,7 @@ struct ClipboardItem: Identifiable, Equatable, Codable {
         self.type = type
         self.windowContext = windowContext
         self.dataSize = dataSize
+        self.isFavorite = isFavorite
     }
 
     var displayName: String {
@@ -55,13 +73,9 @@ struct ClipboardItem: Identifiable, Equatable, Codable {
         formatter.allowedUnits = [.useKB, .useMB]
         return formatter.string(fromByteCount: bytes)
     }
-
-    static func == (lhs: ClipboardItem, rhs: ClipboardItem) -> Bool {
-        lhs.id == rhs.id
-    }
 }
 
-enum ClipboardItemType: Codable {
+enum ClipboardItemType: Codable, Equatable {
     case image
     case text(String)
     case unknown
@@ -726,6 +740,19 @@ class ClipboardManager: ObservableObject {
     }
     
     // MARK: - Clipboard Actions
+
+    func toggleFavorite(_ item: ClipboardItem) {
+        if let index = clipboardHistory.firstIndex(where: { $0.id == item.id }) {
+            // Toggle state
+            clipboardHistory[index].isFavorite.toggle()
+            
+            // Re-sort if needed? No, keep chronological order, just persist the change
+            saveHistory()
+            
+            let newState = clipboardHistory[index].isFavorite
+            print("⭐ Toggled favorite for \(item.displayName): \(newState)")
+        }
+    }
 
     func pasteItem(_ item: ClipboardItem) {
         // Load data lazily from file or text content

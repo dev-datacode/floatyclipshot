@@ -152,6 +152,13 @@ struct FloatingButtonView: View {
             }
 
             Divider()
+            
+            // Full History Window
+            Button(action: {
+                WindowManager.shared.showHistoryWindow()
+            }) {
+                Label("Show Clipboard History", systemImage: "clock.arrow.circlepath")
+            }
 
             // Clipboard memory section
             if !clipboardManager.clipboardHistory.isEmpty {

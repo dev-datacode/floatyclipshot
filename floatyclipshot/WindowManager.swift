@@ -33,6 +33,9 @@ class WindowManager: ObservableObject {
 
     @Published var selectedWindow: WindowInfo?
     @Published var availableWindows: [WindowInfo] = []
+    
+    // History Window
+    private var historyWindow: NSWindow?
 
     // Debouncing: Track last refresh time to avoid excessive refreshes
     private var lastRefreshTime: Date?
@@ -218,5 +221,34 @@ class WindowManager: ObservableObject {
 
         print("⚠️ Window validation: Window \(window.id) (\(window.displayName)) not found (may have been closed)")
         return false
+    }
+    
+    func showHistoryWindow() {
+        // If window exists and is visible, just focus it
+        if let window = historyWindow, window.isVisible {
+            window.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+        
+        // Create new window
+        let historyView = ClipboardHistoryView()
+        let controller = NSHostingController(rootView: historyView)
+        
+        let window = NSWindow(contentViewController: controller)
+        window.title = "Clipboard History"
+        window.setContentSize(NSSize(width: 320, height: 500))
+        window.styleMask = [.titled, .closable, .resizable, .fullSizeContentView]
+        window.titlebarAppearsTransparent = true
+        window.isMovableByWindowBackground = true
+        
+        // Position near mouse or center
+        window.center()
+        
+        // Keep reference
+        self.historyWindow = window
+        
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 }
