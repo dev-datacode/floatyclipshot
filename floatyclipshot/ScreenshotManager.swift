@@ -2,6 +2,7 @@ import Foundation
 import AppKit
 import CoreGraphics
 import ApplicationServices
+import UserNotifications // For modern notifications
 
 final class ScreenshotManager {
     static let shared = ScreenshotManager()
@@ -10,10 +11,67 @@ final class ScreenshotManager {
 
     // MARK: - Terminal Detection
 
+    // MARK: - AppleScript Helper
+
+    private func runAppleScript(_ source: String) -> String? {
+        var error: NSDictionary?
+        if let scriptObject = NSAppleScript(source: source) {
+            let output = scriptObject.executeAndReturnError(&error)
+            if let error = error {
+                print("⚠️ AppleScript error: \(error)")
+                return nil
+            }
+            return output.stringValue
+        }
+        return nil
+    }
+
     /// Get the current working directory of a terminal application
     /// - Parameter app: The running terminal application
     /// - Returns: The current working directory path, or nil if unable to determine
     private func getCurrentWorkingDirectory(for app: NSRunningApplication) -> String? {
+        // 1. Try AppleScript for supported terminals (More accurate for Shell CWD)
+        if let bundleID = app.bundleIdentifier {
+            if bundleID == "com.apple.Terminal" {
+                let script = """
+                tell application "Terminal"
+                    if (count of windows) > 0 then
+                        try
+                            return POSIX path of (target of front window as alias)
+                        on error
+                            return ""
+                        end try
+                    end if
+                    return ""
+                end tell
+                """
+                if let path = runAppleScript(script), !path.isEmpty {
+                    print("✅ Found cwd via AppleScript (Terminal): \(path)")
+                    return path
+                }
+            } else if bundleID == "com.googlecode.iterm2" {
+                let script = """
+                tell application "iTerm"
+                    if (count of windows) > 0 then
+                        try
+                            tell current session of current window
+                                return path
+                            end tell
+                        on error
+                            return ""
+                        end try
+                    end if
+                    return ""
+                end tell
+                """
+                if let path = runAppleScript(script), !path.isEmpty {
+                    print("✅ Found cwd via AppleScript (iTerm2): \(path)")
+                    return path
+                }
+            }
+        }
+
+        // 2. Fallback to lsof (Process CWD)
         guard let pid = app.processIdentifier as Int32? else {
             print("⚠️ Unable to get PID for app")
             return nil
@@ -99,8 +157,9 @@ final class ScreenshotManager {
             "co.zeit.hyper",                // Hyper
             "dev.warp.Warp-Stable",         // Warp
             "com.github.wez.wezterm",       // WezTerm
-            "io.terminus"                   // Terminus
-            // Note: VS Code removed - users paste into markdown/comments more than terminal
+            "io.terminus",                  // Terminus
+            "com.microsoft.VSCode",         // VS Code
+            "com.todesktop.230313mzl4w4u92" // Cursor
         ]
 
         if let bundleID = app.bundleIdentifier {
@@ -111,6 +170,64 @@ final class ScreenshotManager {
 
         print("   Is terminal: ❌ NO (no bundle ID)")
         return false
+    }
+
+    // MARK: - Permission Checks
+
+    /// Check if Accessibility permission is granted (public wrapper)
+    func isAccessibilityGranted() -> Bool {
+        let options: NSDictionary = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: false]
+        return AXIsProcessTrustedWithOptions(options)
+    }
+
+    /// Check if Screen Recording permission is likely granted
+    /// We verify this by checking if we can see window titles from other apps
+    func isScreenRecordingGranted() -> Bool {
+        guard let windowList = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else {
+            return false
+        }
+
+        // If we can see more than just our own windows and they have names, we probably have permission
+        // Without permission, we usually get a list but 'kCGWindowName' is missing or empty for other apps
+        for window in windowList {
+            if let ownerName = window[kCGWindowOwnerName as String] as? String,
+               ownerName != "floatyclipshot", // Not us
+               let windowName = window[kCGWindowName as String] as? String,
+               !windowName.isEmpty {
+                return true
+            }
+        }
+        
+        // Fallback: If no windows are open, we can't be sure, but usually Finder/Dock are always there
+        // If we see "Dock" or "Finder" as owner, it's a good sign
+        for window in windowList {
+             if let ownerName = window[kCGWindowOwnerName as String] as? String,
+                (ownerName == "Dock" || ownerName == "Finder") {
+                 return true
+             }
+        }
+
+        return false
+    }
+
+    /// Open System Settings to the specific page
+    func openSystemSettings(for permission: PermissionType) {
+        let urlString: String
+        switch permission {
+        case .accessibility:
+            urlString = "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+        case .screenRecording:
+            urlString = "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+        }
+        
+        if let url = URL(string: urlString) {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    enum PermissionType {
+        case accessibility
+        case screenRecording
     }
 
     // MARK: - Accessibility Permission
@@ -150,15 +267,19 @@ Alternative: Use ⌘⇧F8 to capture without auto-paste.
                         NSWorkspace.shared.open(url)
                     }
                 }
-            } else {
-                // App in background - use notification
-                let notification = NSUserNotification()
-                notification.title = "Accessibility Permission Required"
-                notification.informativeText = "Auto-paste needs Accessibility permission. Check System Preferences → Security & Privacy → Accessibility"
-                notification.soundName = NSUserNotificationDefaultSoundName
-                NSUserNotificationCenter.default.deliver(notification)
-            }
-        }
+                            } else {
+                                // App in background - use notification
+                                                    let content = UNMutableNotificationContent()
+                                                    content.title = "Accessibility Permission Required"
+                                                    content.body = "Auto-paste needs Accessibility permission. Check System Preferences → Security & Privacy → Accessibility"
+                                                    content.sound = UNNotificationSound.default            
+                                let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
+                                UNUserNotificationCenter.current().add(request) { error in
+                                    if let error = error {
+                                        print("⚠️ Failed to deliver notification: \(error.localizedDescription)")
+                                    }
+                                }
+                            }        }
     }
 
     /// Capture the selected window or full screen and copy to clipboard
@@ -265,7 +386,7 @@ Alternative: Use ⌘⇧F8 to capture without auto-paste.
         if let app = targetApp, let cwd = getCurrentWorkingDirectory(for: app) {
             // Create screenshots subdirectory in cwd
             let cwdURL = URL(filePath: cwd)
-            let screenshotsDir = cwdURL.appendingPathComponent("tmp/screenshots")
+            let screenshotsDir = cwdURL.appendingPathComponent("FloatyClipshot/tmp")
 
             // Try to create the directory if it doesn't exist
             do {
@@ -349,11 +470,17 @@ File path copied to clipboard - paste in terminal with ⌘V.
                     NSWorkspace.shared.selectFile(path, inFileViewerRootedAtPath: "")
                 }
             } else {
-                let notification = NSUserNotification()
-                notification.title = "Screenshot Saved for Terminal"
-                notification.informativeText = "📁 \(fileName) → File path copied to clipboard"
-                notification.soundName = NSUserNotificationDefaultSoundName
-                NSUserNotificationCenter.default.deliver(notification)
+                let content = UNMutableNotificationContent()
+                content.title = "Screenshot Saved for Terminal"
+                content.body = "📁 \(fileName) → File path copied to clipboard"
+                content.sound = UNNotificationSound.default
+
+                let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
+                UNUserNotificationCenter.current().add(request) { error in
+                    if let error = error {
+                        print("⚠️ Failed to deliver notification: \(error.localizedDescription)")
+                    }
+                }
             }
         }
     }
@@ -464,11 +591,17 @@ File path copied to clipboard - paste in terminal with ⌘V.
                 alert.runModal()
             } else {
                 // App in background - use notification
-                let notification = NSUserNotification()
-                notification.title = "Auto-Paste Failed"
-                notification.informativeText = message
-                notification.soundName = NSUserNotificationDefaultSoundName
-                NSUserNotificationCenter.default.deliver(notification)
+                let content = UNMutableNotificationContent()
+                content.title = "Auto-Paste Failed"
+                content.body = message
+                content.sound = UNNotificationSound.default
+
+                let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
+                UNUserNotificationCenter.current().add(request) { error in
+                    if let error = error {
+                        print("⚠️ Failed to deliver notification: \(error.localizedDescription)")
+                    }
+                }
             }
         }
     }

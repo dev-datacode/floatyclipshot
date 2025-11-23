@@ -4,104 +4,68 @@ A macOS screenshot utility designed for developers who need instant, friction-fr
 
 ## Features
 
-- **One-click screenshot capture** via a floating, always-on-top, draggable button
-- **Window-targeted captures** - Select any window once, then every click captures that window
-- **Multi-desktop support** - Target windows on any Space/desktop
-- **Smart terminal detection** - Automatically saves file path for terminals instead of image
-- **Customizable global keyboard shortcuts** - Default ⌘⇧F8 for capture, ⌘⇧F10 for paste
-- **Settings persistence** - Window selection and hotkey preferences saved across app restarts
-- **Instant clipboard** - Screenshots go directly to clipboard for immediate pasting
-- **Clipboard history** - Last 10 items with window context
-- **Visual feedback** - Button turns green when window is targeted
+- **One-click screenshot capture** via a floating, always-on-top, draggable button.
+- **Window-targeted captures**: Select any window once, then every click captures that window.
+- **Multi-desktop support**: Target windows on any Space/desktop.
+- **Smart Terminal Integration**: 
+    - Detects if you are working in **Terminal, iTerm2, VS Code, or Cursor**.
+    - Saves screenshots to your **current project directory** (under `FloatyClipshot/tmp/`).
+    - **Automatically pastes the file path** into your CLI.
+- **Customizable Hotkeys**: 
+    - `Cmd+Shift+F8` (Default): Instant capture to clipboard.
+    - `Cmd+Shift+B` (Default): Capture & Paste Path (Smart Mode).
+- **Privacy & Permissions**: Built-in status checks and guidance for macOS permissions.
 
-## Requirements
+## Quick Start
 
-- macOS 11.0 or later
-- Screen Recording permission (System Preferences → Security & Privacy → Screen Recording)
-- Accessibility permission for auto-paste (System Preferences → Security & Privacy → Accessibility)
-
-## Installation
-
-### For Users
-
-**Option 1: Homebrew Cask (Recommended)**
-```bash
-brew tap hooshyar/floatyclipshot
-brew install --cask floatyclipshot
-```
-
-**Option 2: Direct Download**
-1. Download the latest release from [Releases](https://github.com/hooshyar/floatyclipshot/releases/latest)
-2. Unzip and drag `floatyclipshot.app` to `/Applications`
-3. Right-click the app and select "Open" (first time only)
-
-### For Developers
-
-1. Clone this repository
-2. Open `floatyclipshot.xcodeproj` in Xcode
-3. Build and run (⌘R)
-
-**For distribution:** See [DISTRIBUTION.md](../DISTRIBUTION.md)
-
-## Usage
-
-### Initial Setup
-1. Launch FloatyClipshot → Floating button appears
-2. Drag the button to your preferred location
-3. Right-click → Choose window target (optional)
-4. Enable hotkeys in context menu (optional)
-
-### Capturing Screenshots
-
-**Button Click:**
-- Click the floating button → Instant screenshot to clipboard
-
-**Keyboard Shortcut:**
-- Press ⌘⇧F8 → Instant screenshot to clipboard
-
-**Terminal Apps:**
-- When clicking from Terminal/iTerm2, screenshots are saved to `$PWD/tmp/screenshots/`
-- The `tmp/screenshots` directory is automatically created in your current working directory
-- File path is copied to clipboard
-- Paste with ⌘V to insert path into terminal
-- Falls back to Desktop if current directory is not accessible
-
-### Window Targeting
-- Right-click button → "Choose Window Target"
-- Select any window from the list (even on other desktops!)
-- Button turns green with scope icon
-- All captures now target that window
-
-## Supported Terminal Apps
-
-FloatyClipshot automatically detects and provides file paths for:
-- Terminal.app
-- iTerm2
-- Alacritty
-- Kitty
-- Hyper
-- Warp
-- WezTerm
-- Terminus
-
-## Build from Source
+### 1. Install
+The easiest way to build and install the app is using the included script:
 
 ```bash
-# Clone the repository
-git clone https://github.com/hooshyar/floatyclipshot.git
-cd floatyclipshot
-
-# Build with Xcode
-xcodebuild -project floatyclipshot.xcodeproj -scheme floatyclipshot -configuration Release build
-
-# Or open in Xcode
-open floatyclipshot.xcodeproj
+./install.sh
 ```
+
+This script will:
+1. Build the app using Xcode.
+2. Install it to `/Applications`.
+3. Sign it with your local Apple Development certificate (preserving permissions across updates).
+4. Launch the app.
+
+### 2. Grant Permissions
+On first launch, you must grant permissions for the app to function:
+- **Screen Recording**: To capture window contents.
+- **Accessibility**: To auto-paste file paths.
+
+If permissions are missing, the floating button will show a **red warning badge** (⚠️). 
+Right-click the button and select **"⚠️ Fix Permissions"** to open the setup guide.
+
+### 3. Usage
+
+**Standard Capture (Clipboard):**
+- Click the floating button.
+- OR press `Cmd + Shift + F8`.
+- Result: Image is copied to clipboard.
+
+**CLI / IDE Mode (File Path):**
+- Open your terminal (Terminal, iTerm2, VS Code, Cursor).
+- Navigate to your project folder.
+- Press **`Cmd + Shift + B`**.
+- Result: 
+    1. Screenshot is saved to `./FloatyClipshot/tmp/Screenshot-...png`.
+    2. **Full file path** is pasted into your terminal prompt.
+    3. Ready to send to CLI tools like `claude`, `gemini`, etc.
+
+## Troubleshooting
+
+**"Nothing happens when I press the hotkey"**
+1. Check for the red ⚠️ badge on the floating button.
+2. Go to **System Settings > Privacy & Security > Accessibility**.
+3. Toggle `floatyclipshot` **OFF** and **ON** again (macOS sometimes requires this after an update).
+
+**Build Fails**
+- Ensure you have Xcode installed.
+- Run `xattr -cr .` in the project directory to clean file attributes if signing fails.
 
 ## License
 
-MIT License - See LICENSE file for details
-
-## Author
-
-Hooshyar (hooshyar@gmail.com)
+MIT License

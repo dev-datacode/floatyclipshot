@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import UserNotifications // For notifications
 
 @main
 struct FloatingScreenshotApp: App {
@@ -18,6 +19,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var positionSaveTimer: Timer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Request notification authorization on launch
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
+            if granted {
+                print("✅ Notification permission granted")
+            } else if let error = error {
+                print("⚠️ Notification permission denied: \(error.localizedDescription)")
+            } else {
+                print("⚠️ Notification permission denied")
+            }
+        }
+        
         // CRITICAL: Show privacy warning BEFORE creating any windows
         // This prevents race condition where user could interact with app before seeing warning
         if !SettingsManager.shared.hasShownPrivacyWarning {
@@ -34,9 +46,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let savedPosition = SettingsManager.shared.loadButtonPosition() ?? CGPoint(x: 100, y: 100)
         let validatedPosition = validateButtonPosition(savedPosition)
 
-        // Bigger window for the larger button
+        // Compact window for the button (50px button + 8px padding on each side = 66px)
         window = NSWindow(
-            contentRect: NSRect(x: validatedPosition.x, y: validatedPosition.y, width: 104, height: 104),
+            contentRect: NSRect(x: validatedPosition.x, y: validatedPosition.y, width: 66, height: 66),
             styleMask: [.borderless],
             backing: .buffered,
             defer: false
@@ -141,7 +153,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// Validates that button position is visible on at least one screen
     /// Returns default position if off-screen (e.g., after monitor disconnection)
     private func validateButtonPosition(_ position: CGPoint) -> CGPoint {
-        let buttonSize = CGSize(width: 104, height: 104)
+        let buttonSize = CGSize(width: 66, height: 66)
         let buttonFrame = CGRect(origin: position, size: buttonSize)
 
         // Check if button is visible on any screen

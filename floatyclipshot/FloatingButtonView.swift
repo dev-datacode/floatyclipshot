@@ -8,6 +8,7 @@
 import Foundation
 import SwiftUI
 import AppKit
+import Combine
 
 struct FloatingButtonView: View {
     @ObservedObject private var clipboardManager = ClipboardManager.shared
@@ -23,21 +24,43 @@ struct FloatingButtonView: View {
     @State private var showStorageSettings = false
     @State private var showQuickNote = false
     @State private var showNotesList = false
+    @State private var showPermissionsView = false
+    @State private var missingPermissions = false
+    @State private var lastClickTime: Date = .distantPast  // For click debouncing
+    
+    // Check permissions periodically
+    let permissionTimer = Timer.publish(every: 2.0, on: .main, in: .common).autoconnect()
 
     var body: some View {
         ZStack {
             // Main button
             Circle()
                 .fill(buttonColor)
-                .frame(width: 80, height: 80)
-                .shadow(radius: 10)
+                .frame(width: 50, height: 50)
+                .shadow(radius: 8)
                 .scaleEffect(showCaptureAnimation ? 0.9 : 1.0)
                 .animation(.easeInOut(duration: 0.1), value: showCaptureAnimation)
 
             // Button icon
             Image(systemName: buttonIcon)
-                .font(.system(size: 24, weight: .medium))
+                .font(.system(size: 18, weight: .medium))
                 .foregroundColor(.white)
+                
+            // Warning Badge for Missing Permissions
+            if missingPermissions {
+                VStack {
+                    HStack {
+                        Spacer()
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 14))
+                            .foregroundColor(.white)
+                            .padding(4)
+                            .background(Circle().fill(Color.red))
+                            .offset(x: 4, y: -4)
+                    }
+                    Spacer()
+                }
+            }
 
             // Apple-like glassy feedback overlay
             if showGlassyFeedback {
@@ -52,7 +75,7 @@ struct FloatingButtonView: View {
                             endPoint: .bottomTrailing
                         )
                     )
-                    .frame(width: 80, height: 80)
+                    .frame(width: 50, height: 50)
                     .scaleEffect(showGlassyFeedback ? 1.5 : 0.5)
                     .opacity(showGlassyFeedback ? 0 : 1)
                     .animation(.easeOut(duration: 0.5), value: showGlassyFeedback)
@@ -62,7 +85,7 @@ struct FloatingButtonView: View {
             // Success checkmark
             if showCheckmark {
                 Image(systemName: "checkmark.circle.fill")
-                    .font(.system(size: 40, weight: .bold))
+                    .font(.system(size: 28, weight: .bold))
                     .foregroundColor(.white)
                     .shadow(color: .black.opacity(0.3), radius: 4, x: 0, y: 2)
                     .scaleEffect(showCheckmark ? 1.0 : 0.5)
@@ -70,9 +93,23 @@ struct FloatingButtonView: View {
                     .animation(.spring(response: 0.3, dampingFraction: 0.6, blendDuration: 0), value: showCheckmark)
             }
         }
-        .padding(12)
+        .padding(8)
         .contentShape(Circle()) // Make entire circle clickable
         .onTapGesture {
+            // If permissions missing, show permissions view instead of capturing
+            if missingPermissions {
+                showPermissionsView = true
+                return
+            }
+            
+            // Debounce: Ignore clicks within 300ms to prevent accidental double-screenshots
+            let now = Date()
+            guard now.timeIntervalSince(lastClickTime) > 0.3 else {
+                print("⚠️ Click too fast, ignoring (debounced)")
+                return
+            }
+            lastClickTime = now
+
             // Primary action: Instant capture!
             performQuickCapture()
         }
@@ -80,12 +117,24 @@ struct FloatingButtonView: View {
             // Triggered by keyboard shortcut
             triggerCaptureAnimation()
         }
+        .onReceive(permissionTimer) { _ in
+            checkPermissions()
+        }
         .onAppear {
             // FIX: Refresh window list when app launches to populate initial list
             windowManager.refreshWindowList()
+            checkPermissions()
         }
         .help(tooltipText)
         .contextMenu {
+            // Permission Fix Option
+            if missingPermissions {
+                Button(action: { showPermissionsView = true }) {
+                    Label("⚠️ Fix Permissions", systemImage: "exclamationmark.triangle")
+                }
+                Divider()
+            }
+            
             // Right-click menu for configuration
             windowSelectionSection
 
@@ -273,6 +322,20 @@ struct FloatingButtonView: View {
         .sheet(isPresented: $showNotesList) {
             NotesListView()
         }
+        .sheet(isPresented: $showPermissionsView) {
+            PermissionsView()
+        }
+    }
+    
+    // Check system permissions
+    private func checkPermissions() {
+        let accessibility = ScreenshotManager.shared.isAccessibilityGranted()
+        let screenRecording = ScreenshotManager.shared.isScreenRecordingGranted()
+        
+        // If either is missing, show warning
+        withAnimation {
+            missingPermissions = !accessibility || !screenRecording
+        }
     }
 
     // Instant capture with visual feedback
@@ -419,4 +482,141 @@ struct FloatingButtonView: View {
     FloatingButtonView()
         .frame(width: 100, height: 100)
         .background(Color.gray.opacity(0.3))
+}
+//
+//  PermissionsView.swift
+//  floatyclipshot
+//
+//  Created by Hooshyar on 11/23/25.
+//
+
+import SwiftUI
+
+struct PermissionsView: View {
+    @Environment(\.dismiss) var dismiss
+    @State private var isAccessibilityGranted = false
+    @State private var isScreenRecordingGranted = false
+    
+    // Timer to auto-refresh status when user switches back to app
+    let timer = Timer.publish(every: 1.0, on: .main, in: .common).autoconnect()
+
+    var body: some View {
+        VStack(spacing: 24) {
+            // Header
+            VStack(spacing: 8) {
+                Image(systemName: "lock.shield.fill")
+                    .font(.system(size: 48))
+                    .foregroundColor(.blue)
+                
+                Text("Permissions Required")
+                    .font(.title2)
+                    .bold()
+                
+                Text("FloatyClipshot needs these permissions to capture screens and paste paths.")
+                    .font(.body)
+                    .multilineTextAlignment(.center)
+                    .foregroundColor(.secondary)
+                    .padding(.horizontal)
+            }
+            
+            Divider()
+            
+            // Permissions List
+            VStack(spacing: 20) {
+                // Screen Recording
+                HStack {
+                    Image(systemName: "rectangle.dashed.badge.record")
+                        .font(.system(size: 24))
+                        .foregroundColor(isScreenRecordingGranted ? .green : .orange)
+                        .frame(width: 32)
+                    
+                    VStack(alignment: .leading) {
+                        Text("Screen Recording")
+                            .font(.headline)
+                        Text("Required to capture screenshots.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    
+                    Spacer()
+                    
+                    if isScreenRecordingGranted {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundColor(.green)
+                    } else {
+                        Button("Open Settings") {
+                            ScreenshotManager.shared.openSystemSettings(for: .screenRecording)
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
+                }
+                
+                // Accessibility
+                HStack {
+                    Image(systemName: "keyboard")
+                        .font(.system(size: 24))
+                        .foregroundColor(isAccessibilityGranted ? .green : .orange)
+                        .frame(width: 32)
+                    
+                    VStack(alignment: .leading) {
+                        Text("Accessibility")
+                            .font(.headline)
+                        Text("Required to paste paths automatically.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    
+                    Spacer()
+                    
+                    if isAccessibilityGranted {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundColor(.green)
+                    } else {
+                        Button("Open Settings") {
+                            ScreenshotManager.shared.openSystemSettings(for: .accessibility)
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
+                }
+            }
+            .padding(.horizontal)
+            
+            Divider()
+            
+            // Footer
+            HStack {
+                if isAccessibilityGranted && isScreenRecordingGranted {
+                    Text("✅ All Set!")
+                        .foregroundColor(.green)
+                        .bold()
+                } else {
+                    Text("Please grant permissions to continue.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                
+                Spacer()
+                
+                Button("Done") {
+                    dismiss()
+                }
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(24)
+        .frame(width: 450)
+        .onAppear(perform: checkPermissions)
+        .onReceive(timer) { _ in
+            checkPermissions()
+        }
+    }
+    
+    private func checkPermissions() {
+        isAccessibilityGranted = ScreenshotManager.shared.isAccessibilityGranted()
+        isScreenRecordingGranted = ScreenshotManager.shared.isScreenRecordingGranted()
+    }
+}
+
+#Preview {
+    PermissionsView()
 }

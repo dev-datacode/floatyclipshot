@@ -10,6 +10,7 @@ import AppKit
 import Carbon
 import SwiftUI
 import Combine
+import UserNotifications // For modern notifications
 
 class HotkeyManager: ObservableObject {
     static let shared = HotkeyManager()
@@ -34,8 +35,8 @@ class HotkeyManager: ObservableObject {
     @Published var keyCode: UInt32 = 100 // F8 key code
     @Published var modifiers: UInt32 = UInt32(cmdKey | shiftKey) // Command + Shift
 
-    // MARK: - Capture & Paste Hotkey (Default: Cmd+Shift+F10)
-    @Published var pasteHotkeyEnabled: Bool = false {
+    // MARK: - Capture & Paste Hotkey (Default: Cmd+Shift+B)
+    @Published var pasteHotkeyEnabled: Bool = true {  // Auto-enable for convenience
         didSet {
             if pasteHotkeyEnabled {
                 registerPasteHotkey()
@@ -50,8 +51,8 @@ class HotkeyManager: ObservableObject {
     private var pasteHotKeyRef: EventHotKeyRef?
     private var pasteEventHandler: EventHandlerRef?
 
-    // Default: Command + Shift + F10
-    @Published var pasteKeyCode: UInt32 = 109 // F10 key code
+    // Default: Command + Shift + B (perfect for "Browse" or "Build path")
+    @Published var pasteKeyCode: UInt32 = 11 // B key code
     @Published var pasteModifiers: UInt32 = UInt32(cmdKey | shiftKey) // Command + Shift
 
     private init() {
@@ -172,11 +173,17 @@ class HotkeyManager: ObservableObject {
                     alert.runModal()
                 } else {
                     // App in background - use notification instead to avoid deadlock
-                    let notification = NSUserNotification()
-                    notification.title = "Hotkey Registration Failed"
-                    notification.informativeText = "Could not register \(self.hotkeyDisplayString). Hotkey may be in use by another application."
-                    notification.soundName = NSUserNotificationDefaultSoundName
-                    NSUserNotificationCenter.default.deliver(notification)
+                    let content = UNMutableNotificationContent()
+                    content.title = "Hotkey Registration Failed"
+                    content.body = "Could not register \(self.hotkeyDisplayString). Hotkey may be in use by another application."
+                    content.sound = UNNotificationSound.default
+
+                    let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
+                    UNUserNotificationCenter.current().add(request) { error in
+                        if let error = error {
+                            print("⚠️ Failed to deliver notification: \(error.localizedDescription)")
+                        }
+                    }
                 }
 
                 // Disable hotkey since it failed
@@ -263,11 +270,17 @@ class HotkeyManager: ObservableObject {
                     alert.runModal()
                 } else {
                     // App in background - use notification instead to avoid deadlock
-                    let notification = NSUserNotification()
-                    notification.title = "Paste Hotkey Registration Failed"
-                    notification.informativeText = "Could not register \(self.pasteHotkeyDisplayString). Hotkey may be in use by another application."
-                    notification.soundName = NSUserNotificationDefaultSoundName
-                    NSUserNotificationCenter.default.deliver(notification)
+                    let content = UNMutableNotificationContent()
+                    content.title = "Paste Hotkey Registration Failed"
+                    content.body = "Could not register \(self.pasteHotkeyDisplayString). Hotkey may be in use by another application."
+                    content.sound = UNNotificationSound.default
+
+                    let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
+                    UNUserNotificationCenter.current().add(request) { error in
+                        if let error = error {
+                            print("⚠️ Failed to deliver notification: \(error.localizedDescription)")
+                        }
+                    }
                 }
 
                 // Disable hotkey since it failed
