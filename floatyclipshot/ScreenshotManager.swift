@@ -10,6 +10,56 @@ final class ScreenshotManager {
 
     // MARK: - Terminal Detection
 
+    /// Get the current working directory of a terminal application
+    /// - Parameter app: The running terminal application
+    /// - Returns: The current working directory path, or nil if unable to determine
+    private func getCurrentWorkingDirectory(for app: NSRunningApplication) -> String? {
+        guard let pid = app.processIdentifier as Int32? else {
+            print("⚠️ Unable to get PID for app")
+            return nil
+        }
+
+        print("🔍 Getting cwd for PID \(pid)...")
+
+        // Use lsof to get the current working directory of the process
+        let task = Process()
+        task.executableURL = URL(filePath: "/usr/sbin/lsof")
+        task.arguments = ["-a", "-p", "\(pid)", "-d", "cwd", "-Fn"]
+
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.standardError = Pipe()  // Suppress stderr
+
+        do {
+            try task.run()
+            task.waitUntilExit()
+
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            guard let output = String(data: data, encoding: .utf8) else {
+                print("⚠️ Unable to decode lsof output")
+                return nil
+            }
+
+            // Parse lsof output - format is like:
+            // p<pid>
+            // n<path>
+            let lines = output.split(separator: "\n")
+            for line in lines {
+                if line.hasPrefix("n") {
+                    let path = String(line.dropFirst())  // Remove 'n' prefix
+                    print("✅ Found cwd: \(path)")
+                    return path
+                }
+            }
+
+            print("⚠️ Could not parse cwd from lsof output")
+            return nil
+        } catch {
+            print("⚠️ Failed to run lsof: \(error)")
+            return nil
+        }
+    }
+
     /// Check if the target application is a terminal
     /// Handles both button clicks (uses previous frontmost app) and hotkeys (uses current frontmost app)
     private func isFrontmostAppTerminal() -> Bool {
@@ -113,7 +163,7 @@ Alternative: Use ⌘⇧F8 to capture without auto-paste.
 
     /// Capture the selected window or full screen and copy to clipboard
     func captureFullScreen() {
-        var arguments = ["-x", "-c"]
+        var arguments = ["-x", "-c", "-T", "0"]  // -T 0 disables thumbnail for faster capture
 
         // If a window is selected, capture only that window
         if let window = WindowManager.shared.selectedWindow {
@@ -149,7 +199,7 @@ Alternative: Use ⌘⇧F8 to capture without auto-paste.
 
         print("   ℹ️ Non-terminal app - using clipboard mode")
         // Regular app - use clipboard + auto-paste
-        var arguments = ["-x", "-c"]
+        var arguments = ["-x", "-c", "-T", "0"]  // -T 0 disables thumbnail for faster capture
 
         // If a window is selected, capture only that window
         if let window = WindowManager.shared.selectedWindow {
@@ -195,13 +245,44 @@ Alternative: Use ⌘⇧F8 to capture without auto-paste.
         }
     }
 
-    /// Special handling for terminal apps - save to Desktop and copy file path
+    /// Special handling for terminal apps - save to current working directory and copy file path
     private func captureAndPasteToTerminal() {
+        // Get the target terminal app
+        let currentFrontmost = NSWorkspace.shared.frontmostApplication
+        let targetApp: NSRunningApplication?
+
+        if currentFrontmost?.bundleIdentifier == Bundle.main.bundleIdentifier {
+            targetApp = WindowManager.shared.getPreviousFrontmostApp()
+        } else {
+            targetApp = currentFrontmost
+        }
+
         // Generate filename with timestamp
         let fileName = "Screenshot-\(dateFormatter.string(from: Date())).png"
-        let desktopPath = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Desktop/\(fileName)")
 
-        var arguments = ["-x", desktopPath.path]
+        // Try to get terminal's current working directory, fallback to Desktop
+        let savePath: URL
+        if let app = targetApp, let cwd = getCurrentWorkingDirectory(for: app) {
+            // Create screenshots subdirectory in cwd
+            let cwdURL = URL(filePath: cwd)
+            let screenshotsDir = cwdURL.appendingPathComponent("tmp/screenshots")
+
+            // Try to create the directory if it doesn't exist
+            do {
+                try FileManager.default.createDirectory(at: screenshotsDir, withIntermediateDirectories: true)
+                print("✅ Using terminal's cwd screenshots dir: \(screenshotsDir.path)")
+                savePath = screenshotsDir.appendingPathComponent(fileName)
+            } catch {
+                print("⚠️ Failed to create screenshots directory: \(error)")
+                print("   Falling back to Desktop")
+                savePath = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Desktop/\(fileName)")
+            }
+        } else {
+            print("⚠️ Could not get terminal cwd, falling back to Desktop")
+            savePath = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Desktop/\(fileName)")
+        }
+
+        var arguments = ["-x", "-T", "0", savePath.path]  // -T 0 disables thumbnail for faster capture
 
         // If a window is selected, capture only that window
         if let window = WindowManager.shared.selectedWindow {
@@ -213,36 +294,34 @@ Alternative: Use ⌘⇧F8 to capture without auto-paste.
             }
         }
 
-        // Save screenshot to Desktop
+        // Save screenshot to determined path (cwd or Desktop)
         runScreencapture(arguments: arguments) {
             // Verify file was created before proceeding
             DispatchQueue.main.async {
                 // Add small delay to ensure file system has written the file
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                    guard FileManager.default.fileExists(atPath: desktopPath.path) else {
-                        print("⚠️ Screenshot save failed - file not created at \(desktopPath.path)")
+                    guard FileManager.default.fileExists(atPath: savePath.path) else {
+                        print("⚠️ Screenshot save failed - file not created at \(savePath.path)")
                         self.showPasteFailureNotification(
-                            "Failed to save screenshot to Desktop. Check disk space and permissions."
+                            "Failed to save screenshot. Check disk space and permissions."
                         )
                         return
                     }
 
-                    // Copy file path to clipboard for pasting in terminal
+                    // Copy file path to clipboard
                     let pasteboard = NSPasteboard.general
                     pasteboard.clearContents()
-                    pasteboard.setString(desktopPath.path, forType: .string)
+                    pasteboard.setString(savePath.path, forType: .string)
 
-                    print("✅ File path copied to clipboard: \(desktopPath.path)")
-                    print("   User can paste with Cmd+V in terminal")
+                    print("✅ File path copied to clipboard: \(savePath.path)")
+                    print("   Auto-pasting file path...")
 
-                    // Show success notification
-                    self.showTerminalPasteNotification(fileName: fileName, path: desktopPath.path)
-
-                    // NOTE: We do NOT auto-paste for terminals because:
-                    // 1. Modal alert makes us frontmost → Cmd+V goes to our window, not terminal
-                    // 2. User must manually paste with Cmd+V (clipboard has correct path)
-                    // 3. Alert message tells user to "paste in terminal with ⌘V"
-                    // This is 100% reliable vs auto-paste which fails due to focus issues
+                    // Auto-paste the file path at cursor position (Cmd+V simulation)
+                    // Small delay to ensure clipboard is ready
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        self.simulatePaste()
+                        print("✅ Auto-paste triggered - file path should appear at cursor")
+                    }
                 }
             }
         }
@@ -396,12 +475,12 @@ File path copied to clipboard - paste in terminal with ⌘V.
 
     /// Let user select a region and copy to clipboard
     func captureRegion() {
-        var arguments = ["-i", "-c"]
+        var arguments = ["-i", "-c", "-T", "0"]  // -T 0 disables thumbnail for faster capture
 
         // Note: Region selection with window-specific capture isn't directly supported
         // If a window is selected, we'll capture the full window instead
         if let window = WindowManager.shared.selectedWindow {
-            arguments = ["-x", "-c", "-l\(window.id)"]
+            arguments = ["-x", "-c", "-T", "0", "-l\(window.id)"]  // -T 0 disables thumbnail for faster capture
         }
 
         runScreencapture(arguments: arguments) {
@@ -417,7 +496,7 @@ File path copied to clipboard - paste in terminal with ⌘V.
         let fileName = "Screenshot-\(dateFormatter.string(from: Date())).png"
         let desktopPath = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Desktop/\(fileName)")
 
-        var arguments = ["-x", desktopPath.path]
+        var arguments = ["-x", "-T", "0", desktopPath.path]  // -T 0 disables thumbnail for faster capture
 
         // If a window is selected, capture only that window
         if let window = WindowManager.shared.selectedWindow {
@@ -432,11 +511,11 @@ File path copied to clipboard - paste in terminal with ⌘V.
         let fileName = "Screenshot-\(dateFormatter.string(from: Date())).png"
         let desktopPath = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Desktop/\(fileName)")
 
-        var arguments = ["-i", desktopPath.path]
+        var arguments = ["-i", "-T", "0", desktopPath.path]  // -T 0 disables thumbnail for faster capture
 
         // If a window is selected, capture the full window instead of region
         if let window = WindowManager.shared.selectedWindow {
-            arguments = ["-x", desktopPath.path, "-l\(window.id)"]
+            arguments = ["-x", "-T", "0", desktopPath.path, "-l\(window.id)"]  // -T 0 disables thumbnail for faster capture
         }
 
         runScreencapture(arguments: arguments)
@@ -450,7 +529,7 @@ File path copied to clipboard - paste in terminal with ⌘V.
     }()
 
     /// Runs the macOS `screencapture` tool
-    private func runScreencapture(arguments: [String], completion: (() -> Void)? = nil) {
+    private func runScreencapture(arguments: [String], timeout: TimeInterval = 5.0, completion: (() -> Void)? = nil) {
         let task = Process()
 
         // On most macOS systems, screencapture is here:
@@ -459,29 +538,47 @@ File path copied to clipboard - paste in terminal with ⌘V.
         task.executableURL = URL(filePath: "/usr/sbin/screencapture")
         task.arguments = arguments
 
-        // Add completion handler
-        if let completion = completion {
-            task.terminationHandler = { _ in
-                completion()
+        // Set quality of service for better priority
+        task.qualityOfService = .userInteractive
+
+        // Add timeout protection
+        var timeoutTimer: DispatchWorkItem?
+        timeoutTimer = DispatchWorkItem {
+            if task.isRunning {
+                task.terminate()
+                print("⚠️ Screenshot timed out after \(timeout)s")
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + timeout, execute: timeoutTimer!)
+
+        // Add completion/termination handler
+        task.terminationHandler = { process in
+            // Cancel timeout timer since process completed
+            timeoutTimer?.cancel()
+
+            DispatchQueue.main.async {
+                if process.terminationStatus == 0 {
+                    completion?()
+                } else {
+                    print("❌ Screenshot failed with status: \(process.terminationStatus)")
+                }
             }
         }
 
-        do {
-            try task.run()
-            
-            // For synchronous calls (file saves), wait for completion
-            if completion == nil {
-                task.waitUntilExit()
-            }
-        } catch {
-            print("Failed to run screencapture: \(error)")
-            // Optionally show an alert to the user
-            DispatchQueue.main.async {
-                let alert = NSAlert()
-                alert.messageText = "Screenshot Failed"
-                alert.informativeText = "Could not capture screenshot: \(error.localizedDescription)"
-                alert.alertStyle = .warning
-                alert.runModal()
+        // Always run async (never block UI)
+        DispatchQueue.global(qos: .userInteractive).async {
+            do {
+                try task.run()
+            } catch {
+                print("Failed to run screencapture: \(error)")
+                // Optionally show an alert to the user
+                DispatchQueue.main.async {
+                    let alert = NSAlert()
+                    alert.messageText = "Screenshot Failed"
+                    alert.informativeText = "Could not capture screenshot: \(error.localizedDescription)"
+                    alert.alertStyle = .warning
+                    alert.runModal()
+                }
             }
         }
     }

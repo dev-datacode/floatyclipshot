@@ -60,9 +60,11 @@ brew install --cask floatyclipshot
 - Press ⌘⇧F8 → Instant screenshot to clipboard
 
 **Terminal Apps:**
-- When clicking from Terminal/iTerm2, screenshots are saved to Desktop
+- When clicking from Terminal/iTerm2, screenshots are saved to `$PWD/tmp/screenshots/`
+- The `tmp/screenshots` directory is automatically created in your current working directory
 - File path is copied to clipboard
 - Paste with ⌘V to insert path into terminal
+- Falls back to Desktop if current directory is not accessible
 
 ### Window Targeting
 - Right-click button → "Choose Window Target"
