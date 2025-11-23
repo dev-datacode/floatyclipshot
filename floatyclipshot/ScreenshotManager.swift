@@ -26,11 +26,46 @@ final class ScreenshotManager {
         return nil
     }
 
+    /// Get the active document/folder path from the app's focused window using Accessibility API
+    /// Works for VS Code, Cursor, Xcode, Finder, etc.
+    private func getDocumentPath(for app: NSRunningApplication) -> String? {
+        let pid = app.processIdentifier
+        let appRef = AXUIElementCreateApplication(pid)
+        
+        var focusedWindow: AnyObject?
+        // Get focused window
+        guard AXUIElementCopyAttributeValue(appRef, kAXFocusedWindowAttribute as CFString, &focusedWindow) == .success else {
+            return nil
+        }
+        
+        let windowRef = focusedWindow as! AXUIElement
+        
+        // Get document URL (kAXDocumentAttribute)
+        var documentURL: AnyObject?
+        let result = AXUIElementCopyAttributeValue(windowRef, kAXDocumentAttribute as CFString, &documentURL)
+        
+        if result == .success, let urlString = documentURL as? String {
+            // Handle "file://" URLs
+            if let url = URL(string: urlString) {
+                let path = url.path
+                print("✅ Found document path via Accessibility: \(path)")
+                
+                // If it's a file, return parent directory. If directory, return it.
+                var isDir: ObjCBool = false
+                if FileManager.default.fileExists(atPath: path, isDirectory: &isDir) {
+                    return isDir.boolValue ? path : (path as NSString).deletingLastPathComponent
+                }
+                return path
+            }
+        }
+        return nil
+    }
+
     /// Get the current working directory of a terminal application
     /// - Parameter app: The running terminal application
     /// - Returns: The current working directory path, or nil if unable to determine
     private func getCurrentWorkingDirectory(for app: NSRunningApplication) -> String? {
-        // 1. Try AppleScript for supported terminals (More accurate for Shell CWD)
+        // 1. Try AppleScript for supported terminals (Most accurate for Shell CWD)
         if let bundleID = app.bundleIdentifier {
             if bundleID == "com.apple.Terminal" {
                 let script = """
@@ -70,8 +105,14 @@ final class ScreenshotManager {
                 }
             }
         }
+        
+        // 2. Try Accessibility API (Best for VS Code, Cursor, Xcode)
+        // This finds the path of the open file/project
+        if let docPath = getDocumentPath(for: app) {
+            return docPath
+        }
 
-        // 2. Fallback to lsof (Process CWD)
+        // 3. Fallback to lsof (Process CWD) - Least accurate for GUI apps
         guard let pid = app.processIdentifier as Int32? else {
             print("⚠️ Unable to get PID for app")
             return nil
