@@ -1,0 +1,81 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'  # Triggers on version tags like v1.0.0
+
+jobs:
+  build-and-release:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Extract version from tag
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Build app
+        run: |
+          xcodebuild -project floatyclipshot.xcodeproj \
+            -scheme floatyclipshot \
+            -configuration Release \
+            clean build
+
+      - name: Package app
+        run: |
+          BUILD_DIR=$(xcodebuild -project floatyclipshot.xcodeproj \
+            -scheme floatyclipshot \
+            -configuration Release \
+            -showBuildSettings | grep " BUILD_DIR" | sed 's/[ ]*BUILD_DIR = //')
+
+          mkdir -p release
+          cd "$BUILD_DIR/Release"
+          zip -r -q "$OLDPWD/release/floatyclipshot-${{ steps.get_version.outputs.VERSION }}.zip" floatyclipshot.app
+          cd "$OLDPWD"
+
+      - name: Calculate SHA256
+        id: sha
+        run: |
+          SHA256=$(shasum -a 256 release/floatyclipshot-${{ steps.get_version.outputs.VERSION }}.zip | awk '{print $1}')
+          echo "SHA256=$SHA256" >> $GITHUB_OUTPUT
+          echo "SHA256: $SHA256"
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: release/floatyclipshot-${{ steps.get_version.outputs.VERSION }}.zip
+          body: |
+            ## FloatyClipshot v${{ steps.get_version.outputs.VERSION }}
+
+            ### Installation
+
+            **Via Homebrew:**
+            ```bash
+            brew tap hooshyar/floatyclipshot
+            brew install --cask floatyclipshot
+            ```
+
+            **Manual Installation:**
+            1. Download `floatyclipshot-${{ steps.get_version.outputs.VERSION }}.zip`
+            2. Unzip and drag to Applications folder
+            3. Right-click → Open (first time only)
+
+            ### SHA256
+            ```
+            ${{ steps.sha.outputs.SHA256 }}
+            ```
+
+            ### Requirements
+            - macOS 11.0 or later
+            - Screen Recording permission
+            - Accessibility permission (for auto-paste)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

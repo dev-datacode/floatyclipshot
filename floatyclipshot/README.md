@@ -22,9 +22,26 @@ A macOS screenshot utility designed for developers who need instant, friction-fr
 
 ## Installation
 
+### For Users
+
+**Option 1: Homebrew Cask (Recommended)**
+```bash
+brew tap hooshyar/floatyclipshot
+brew install --cask floatyclipshot
+```
+
+**Option 2: Direct Download**
+1. Download the latest release from [Releases](https://github.com/hooshyar/floatyclipshot/releases/latest)
+2. Unzip and drag `floatyclipshot.app` to `/Applications`
+3. Right-click the app and select "Open" (first time only)
+
+### For Developers
+
 1. Clone this repository
 2. Open `floatyclipshot.xcodeproj` in Xcode
 3. Build and run (⌘R)
+
+**For distribution:** See [DISTRIBUTION.md](../DISTRIBUTION.md)
 
 ## Usage
 
