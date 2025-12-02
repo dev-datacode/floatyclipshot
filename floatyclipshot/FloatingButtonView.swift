@@ -643,12 +643,21 @@ struct FloatingMenuView: View {
 
     private func refreshCache() {
         // Safely copy data to avoid crashes from ObservedObject updates
-        cachedWindows = Array(WindowManager.shared.availableWindows.prefix(8))
+        cachedWindows = Array(WindowManager.shared.availableWindows)  // All windows
         cachedClipboardItems = Array(ClipboardManager.shared.clipboardHistory.prefix(5))
         cachedIsPaused = ClipboardManager.shared.isPaused
         cachedHotkeyEnabled = HotkeyManager.shared.isEnabled
         cachedHotkeyString = HotkeyManager.shared.hotkeyDisplayString
         cachedSelectedWindow = WindowManager.shared.selectedWindow
+    }
+
+    private func refreshWindows() {
+        WindowManager.shared.refreshWindowList()
+        // Small delay to let the refresh complete
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            cachedWindows = Array(WindowManager.shared.availableWindows)
+            cachedSelectedWindow = WindowManager.shared.selectedWindow
+        }
     }
 
     // MARK: - Windows Tab
@@ -668,7 +677,28 @@ struct FloatingMenuView: View {
             }
         }
 
-        // Windows list
+        // Header with count and refresh
+        HStack {
+            Text("\(cachedWindows.count) windows")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(.secondary)
+
+            Spacer()
+
+            Button(action: refreshWindows) {
+                HStack(spacing: 4) {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 10))
+                    Text("Refresh")
+                        .font(.system(size: 10))
+                }
+                .foregroundStyle(.blue)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 4)
+
+        // Windows list - ALL windows
         VStack(spacing: 4) {
             ForEach(cachedWindows) { window in
                 WindowRow(
