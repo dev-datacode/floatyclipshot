@@ -14,6 +14,7 @@ struct WindowInfo: Identifiable, Equatable {
     let id: Int // CGWindowID
     let name: String
     let ownerName: String
+    let ownerPID: Int // Process ID for more reliable matching
     let bounds: CGRect
 
     var displayName: String {
@@ -150,10 +151,13 @@ class WindowManager: ObservableObject {
                 continue
             }
 
+            let ownerPID = windowDict[kCGWindowOwnerPID as String] as? Int ?? 0
+
             let windowInfo = WindowInfo(
                 id: windowID,
                 name: windowName,
                 ownerName: ownerName,
+                ownerPID: ownerPID,
                 bounds: bounds
             )
 

@@ -256,6 +256,7 @@ final class SettingsManager {
             id: windowID,
             name: windowName,
             ownerName: ownerName,
+            ownerPID: 0, // PID is not persisted, will be updated when window list is refreshed
             bounds: .zero // Bounds will be updated when window list is refreshed
         )
     }

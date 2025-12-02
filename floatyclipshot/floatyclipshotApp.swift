@@ -40,6 +40,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // It starts disabled by default, user can enable via context menu
         _ = HotkeyManager.shared
 
+        // Initialize tag manager (starts displaying tags on windows)
+        _ = TagManager.shared
+
         let contentView = FloatingButtonView()
 
         // Load saved position and validate it's on-screen
@@ -81,6 +84,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         // Save clipboard history before quit
         ClipboardManager.shared.saveHistoryImmediately()
+        // Save window tags before quit
+        TagManager.shared.saveTagsImmediately()
     }
 
     // MARK: - Privacy Warning
