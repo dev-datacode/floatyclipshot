@@ -9,6 +9,13 @@ import Foundation
 import SwiftUI
 import Carbon
 
+// MARK: - Notification Names
+
+extension Notification.Name {
+    static let privateModeChanged = Notification.Name("com.floatyclipshot.privateModeChanged")
+    static let encryptionSettingsChanged = Notification.Name("com.floatyclipshot.encryptionSettingsChanged")
+}
+
 /// Storage limit options for clipboard history
 enum StorageLimit: Int64, Codable, CaseIterable {
     case limit100MB = 104_857_600      // 100 MB
@@ -38,6 +45,7 @@ enum StorageLimit: Int64, Codable, CaseIterable {
     }
 }
 
+@MainActor
 final class SettingsManager {
     static let shared = SettingsManager()
 
@@ -64,6 +72,11 @@ final class SettingsManager {
         static let storageLimit = "storageLimit"
         // Privacy
         static let privacyWarningShown = "privacyWarningShown"
+        // Security & Encryption
+        static let encryptionEnabled = "encryptionEnabled"
+        static let privateModeEnabled = "privateModeEnabled"
+        static let sensitivePurgeMinutes = "sensitivePurgeMinutes"
+        static let autoDetectSensitive = "autoDetectSensitive"
     }
 
     private init() {}
@@ -275,6 +288,73 @@ final class SettingsManager {
         defaults.set(true, forKey: Keys.privacyWarningShown)
     }
 
+    // MARK: - Security & Encryption Settings
+
+    /// Whether clipboard history should be encrypted at rest
+    var encryptionEnabled: Bool {
+        get {
+            // Default to TRUE for security - clipboard often contains sensitive data
+            // Existing users with unencrypted data will have it auto-migrated on next save
+            if defaults.object(forKey: Keys.encryptionEnabled) == nil {
+                return true  // ✅ SECURITY: Encryption ON by default
+            }
+            return defaults.bool(forKey: Keys.encryptionEnabled)
+        }
+        set { defaults.set(newValue, forKey: Keys.encryptionEnabled) }
+    }
+
+    /// Private Mode - when enabled, clipboard monitoring is paused
+    var privateModeEnabled: Bool {
+        get { defaults.bool(forKey: Keys.privateModeEnabled) }
+        set {
+            defaults.set(newValue, forKey: Keys.privateModeEnabled)
+            // Notify ClipboardManager of the change
+            NotificationCenter.default.post(name: .privateModeChanged, object: nil, userInfo: ["enabled": newValue])
+        }
+    }
+
+    /// Minutes before sensitive items are auto-purged (0 = never)
+    var sensitivePurgeMinutes: Int {
+        get {
+            let value = defaults.integer(forKey: Keys.sensitivePurgeMinutes)
+            return value == 0 ? 60 : value // Default to 60 minutes
+        }
+        set { defaults.set(newValue, forKey: Keys.sensitivePurgeMinutes) }
+    }
+
+    /// Auto-detect sensitive content (passwords, API keys, etc.)
+    var autoDetectSensitive: Bool {
+        get {
+            // Default to true for security
+            if defaults.object(forKey: Keys.autoDetectSensitive) == nil {
+                return true
+            }
+            return defaults.bool(forKey: Keys.autoDetectSensitive)
+        }
+        set { defaults.set(newValue, forKey: Keys.autoDetectSensitive) }
+    }
+
+    /// Purge interval options for sensitive data
+    enum SensitivePurgeInterval: Int, CaseIterable {
+        case never = 0
+        case minutes15 = 15
+        case minutes30 = 30
+        case hour1 = 60
+        case hours4 = 240
+        case hours24 = 1440
+
+        var displayName: String {
+            switch self {
+            case .never: return "Never"
+            case .minutes15: return "15 minutes"
+            case .minutes30: return "30 minutes"
+            case .hour1: return "1 hour"
+            case .hours4: return "4 hours"
+            case .hours24: return "24 hours"
+            }
+        }
+    }
+
     // MARK: - Reset
 
     func resetAllSettings() {
@@ -290,5 +370,10 @@ final class SettingsManager {
         defaults.removeObject(forKey: Keys.buttonPositionX)
         defaults.removeObject(forKey: Keys.buttonPositionY)
         defaults.removeObject(forKey: Keys.privacyWarningShown)
+        // Security settings
+        defaults.removeObject(forKey: Keys.encryptionEnabled)
+        defaults.removeObject(forKey: Keys.privateModeEnabled)
+        defaults.removeObject(forKey: Keys.sensitivePurgeMinutes)
+        defaults.removeObject(forKey: Keys.autoDetectSensitive)
     }
 }

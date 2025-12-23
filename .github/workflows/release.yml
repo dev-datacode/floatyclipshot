@@ -22,6 +22,16 @@ jobs:
         id: get_version
         run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
 
+      - name: Run tests
+        run: |
+          xcodebuild -project floatyclipshot.xcodeproj \
+            -scheme floatyclipshotTests \
+            -configuration Debug \
+            test \
+            -destination 'platform=macOS' \
+            -resultBundlePath TestResults.xcresult || true
+          # Tests are informational for now; build continues even if some fail
+
       - name: Build app
         run: |
           xcodebuild -project floatyclipshot.xcodeproj \
@@ -59,7 +69,7 @@ jobs:
 
             **Via Homebrew:**
             ```bash
-            brew tap hooshyar/floatyclipshot
+            brew tap dev-datacode/floatyclipshot
             brew install --cask floatyclipshot
             ```
 

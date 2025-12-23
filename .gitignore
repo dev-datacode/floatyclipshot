@@ -1,0 +1,32 @@
+# Xcode
+build/
+DerivedData/
+*.xcuserstate
+*.xccheckout
+*.moved-aside
+*.xcscmblueprint
+
+# User-specific Xcode files
+xcuserdata/
+*.xcworkspace/xcuserdata/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Logs and temp files
+*.log
+*.tmp
+tmp/
+
+# Release artifacts (built during CI)
+release/
+
+# Firebase
+firebase-debug.log
+.firebase/
+
+# Build outputs
+/tmp/floatyclipshot_build_output/

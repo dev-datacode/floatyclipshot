@@ -10,7 +10,7 @@ import AppKit
 import SwiftUI
 import Combine
 
-struct WindowInfo: Identifiable, Equatable {
+struct WindowInfo: Identifiable, Equatable, Hashable {
     let id: Int // CGWindowID
     let name: String
     let ownerName: String
@@ -27,8 +27,13 @@ struct WindowInfo: Identifiable, Equatable {
     static func == (lhs: WindowInfo, rhs: WindowInfo) -> Bool {
         lhs.id == rhs.id
     }
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+    }
 }
 
+@MainActor
 class WindowManager: ObservableObject {
     static let shared = WindowManager()
 
@@ -67,24 +72,23 @@ class WindowManager: ObservableObject {
 
         // Load saved window selection
         if let savedWindow = SettingsManager.shared.loadSelectedWindow() {
-            // Verify the window still exists by refreshing the list first
+            // Store the placeholder saved window initially
+            self.selectedWindow = savedWindow
+            
+            // Trigger a refresh to verify and update it with real bounds/PID
             refreshWindowList()
-            // Check if the saved window is in the current list
-            if let validWindow = availableWindows.first(where: { $0.id == savedWindow.id }) {
-                self.selectedWindow = validWindow
-            } else {
-                // Window no longer exists, clear the saved selection
-                SettingsManager.shared.saveSelectedWindow(nil)
-            }
         }
     }
 
     @objc private func frontmostAppChanged(_ notification: Notification) {
-        if let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication {
-            // Store previous frontmost app if it's NOT us
-            if app.bundleIdentifier != Bundle.main.bundleIdentifier {
-                previousFrontmostApp = app
-                print("🔄 Previous frontmost app: \(app.localizedName ?? "Unknown") (\(app.bundleIdentifier ?? "Unknown"))")
+        guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
+        let bundleID = app.bundleIdentifier
+        let isUs = bundleID == Bundle.main.bundleIdentifier
+        
+        Task { @MainActor in
+            if !isUs {
+                self.previousFrontmostApp = app
+                print("🔄 Previous frontmost app: \(app.localizedName ?? "Unknown") (\(bundleID ?? "Unknown"))")
             }
         }
     }
@@ -100,98 +104,117 @@ class WindowManager: ObservableObject {
         // Debounce: Skip if refreshed in last 0.5 seconds
         if let lastRefresh = lastRefreshTime,
            Date().timeIntervalSince(lastRefresh) < refreshDebounceInterval {
-            print("⏭️ Skipping window refresh (debounced - last refresh \(String(format: "%.2f", Date().timeIntervalSince(lastRefresh)))s ago)")
             return
         }
+        performRefresh()
+    }
 
+    /// Force refresh window list, bypassing debounce
+    func forceRefreshWindowList() {
+        print("🔄 Force refreshing window list (bypassing debounce)")
+        performRefresh()
+    }
+
+    private func performRefresh() {
         lastRefreshTime = Date()
 
-        // Use .optionAll to get windows from ALL desktops/Spaces, not just current one
-        // This allows users to select windows on other desktops
-        guard let windowList = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else {
-            print("⚠️ Failed to get window list from CGWindowListCopyWindowInfo")
-            availableWindows = []
-            return
-        }
+        // Move expensive window listing to background thread
+        Task.detached(priority: .userInitiated) {
+            // Use autoreleasepool to ensure temporary CF objects are cleaned up promptly
+            let windows: [WindowInfo] = autoreleasepool {
+                guard let windowList = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else {
+                    print("⚠️ Failed to get window list from CGWindowListCopyWindowInfo")
+                    return []
+                }
 
-        var windows: [WindowInfo] = []
+                var results: [WindowInfo] = []
 
-        for windowDict in windowList {
-            // Extract window information
-            guard let windowID = windowDict[kCGWindowNumber as String] as? Int,
-                  let ownerName = windowDict[kCGWindowOwnerName as String] as? String,
-                  let boundsDict = windowDict[kCGWindowBounds as String] as? [String: Any] else {
-                continue
+                for windowDict in windowList {
+                    // Extract window information
+                    guard let windowID = windowDict[kCGWindowNumber as String] as? Int,
+                          let ownerName = windowDict[kCGWindowOwnerName as String] as? String,
+                          let boundsDict = windowDict[kCGWindowBounds as String] as? [String: Any] else {
+                        continue
+                    }
+
+                    // Skip our own app's windows
+                    if ownerName.contains("floatyclipshot") || ownerName.contains("FloatingScreenshot") {
+                        continue
+                    }
+
+                    let windowName = windowDict[kCGWindowName as String] as? String ?? ""
+
+                    // Parse bounds
+                    let x = boundsDict["X"] as? CGFloat ?? 0
+                    let y = boundsDict["Y"] as? CGFloat ?? 0
+                    let width = boundsDict["Width"] as? CGFloat ?? 0
+                    let height = boundsDict["Height"] as? CGFloat ?? 0
+                    let bounds = CGRect(x: x, y: y, width: width, height: height)
+
+                    // Skip very small windows
+                    if width < 100 || height < 100 {
+                        continue
+                    }
+
+                    // Skip windows with suspicious bounds
+                    if abs(x) > 100000 || abs(y) > 100000 {
+                        continue
+                    }
+
+                    let ownerPID = windowDict[kCGWindowOwnerPID as String] as? Int ?? 0
+
+                    let windowInfo = WindowInfo(
+                        id: windowID,
+                        name: windowName,
+                        ownerName: ownerName,
+                        ownerPID: ownerPID,
+                        bounds: bounds
+                    )
+
+                    results.append(windowInfo)
+                }
+                return results
             }
 
-            // Skip our own app's windows
-            if ownerName.contains("floatyclipshot") || ownerName.contains("FloatingScreenshot") {
-                continue
+            if windows.isEmpty {
+                await MainActor.run { self.availableWindows = [] }
+                return
             }
 
-            // Skip system UI elements and small windows
-            let windowName = windowDict[kCGWindowName as String] as? String ?? ""
-
-            // Parse bounds
-            let x = boundsDict["X"] as? CGFloat ?? 0
-            let y = boundsDict["Y"] as? CGFloat ?? 0
-            let width = boundsDict["Width"] as? CGFloat ?? 0
-            let height = boundsDict["Height"] as? CGFloat ?? 0
-            let bounds = CGRect(x: x, y: y, width: width, height: height)
-
-            // Skip very small windows (likely UI elements or minimized windows)
-            // Minimized windows often have width/height of 0 or very small values
-            if width < 100 || height < 100 {
-                continue
+            // Sort by owner name, then window name
+            let windowsResult = windows.sorted { lhs, rhs in
+                if lhs.ownerName == rhs.ownerName {
+                    return lhs.name < rhs.name
+                }
+                return lhs.ownerName < rhs.ownerName
             }
 
-            // Skip windows with suspicious bounds (off-screen by large amounts)
-            // This catches some hidden/minimized windows that slip through
-            if abs(x) > 100000 || abs(y) > 100000 {
-                continue
+            // Update state on Main Actor
+            await MainActor.run {
+                self.availableWindows = windowsResult
+                
+                // Update selected window if it exists in the new list
+                if let current = self.selectedWindow {
+                    if let updated = windowsResult.first(where: { $0.id == current.id }) {
+                        self.selectedWindow = updated
+                    }
+                }
             }
-
-            let ownerPID = windowDict[kCGWindowOwnerPID as String] as? Int ?? 0
-
-            let windowInfo = WindowInfo(
-                id: windowID,
-                name: windowName,
-                ownerName: ownerName,
-                ownerPID: ownerPID,
-                bounds: bounds
-            )
-
-            windows.append(windowInfo)
-        }
-
-        // Sort by owner name, then window name
-        windows.sort { lhs, rhs in
-            if lhs.ownerName == rhs.ownerName {
-                return lhs.name < rhs.name
-            }
-            return lhs.ownerName < rhs.ownerName
-        }
-
-        DispatchQueue.main.async { [weak self] in
-            self?.availableWindows = windows
         }
     }
 
     /// Select a window for future captures
     func selectWindow(_ window: WindowInfo?) {
-        DispatchQueue.main.async { [weak self] in
-            self?.selectedWindow = window
+        self.selectedWindow = window
 
-            if let window = window {
-                print("🎯 Window selected: \(window.displayName) (ID: \(window.id))")
-                print("   Bounds: \(window.bounds)")
-            } else {
-                print("🎯 Window selection cleared (back to full screen)")
-            }
-
-            // Save to settings
-            SettingsManager.shared.saveSelectedWindow(window)
+        if let window = window {
+            print("🎯 Window selected: \(window.displayName) (ID: \(window.id))")
+        } else {
+            print("🎯 Window selection cleared (back to full screen)")
         }
+
+        // Save to settings
+        SettingsManager.shared.saveSelectedWindow(window)
     }
 
     /// Clear selected window (back to full screen mode)

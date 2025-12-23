@@ -149,7 +149,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Debounce saves to prevent disk spam while dragging
         positionSaveTimer?.invalidate()
         positionSaveTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { [weak self] _ in
-            SettingsManager.shared.saveButtonPosition(window.frame.origin)
+            Task { @MainActor in
+                SettingsManager.shared.saveButtonPosition(window.frame.origin)
+            }
         }
     }
 

@@ -10,6 +10,7 @@ import SwiftUI
 import AppKit
 import Combine
 
+@MainActor
 class TagManager: ObservableObject {
     static let shared = TagManager()
 
@@ -24,7 +25,8 @@ class TagManager: ObservableObject {
     // File management
     private let tagsFileName = "window_tags.json"
     private var tagsFileURL: URL {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first ?? 
+                         FileManager.default.homeDirectoryForCurrentUser
         let appFolder = appSupport.appendingPathComponent("FloatyClipshot")
         return appFolder.appendingPathComponent(tagsFileName)
     }
@@ -93,11 +95,15 @@ class TagManager: ObservableObject {
     // MARK: - Window Monitoring
 
     private func setupWindowMonitoring() {
-        // Timer for position updates only (windows moving/resizing)
-        // Reduced frequency since we use notifications for window changes
-        windowUpdateTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-            self?.updateOverlayPositions()
-        }
+        // DISABLED: Timer contributes to EXC_BAD_ACCESS crashes on macOS 26 beta
+        // Since overlays are disabled (see refreshOverlays()), this timer is unnecessary.
+        // The timer was calling updateOverlayPositions() which calls refreshOverlays()
+        // which now returns early, but the timer itself still triggers view updates.
+        // See crash reports: floatyclipshot-2025-12-17-*.ips
+        //
+        // windowUpdateTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+        //     self?.updateOverlayPositions()
+        // }
 
         // Monitor for enabled state changes
         $isEnabled
@@ -186,6 +192,17 @@ class TagManager: ObservableObject {
             hideAllOverlays()
             return
         }
+
+        // DISABLED: Tag overlays cause EXC_BAD_ACCESS crashes on macOS 26 beta
+        // Root cause: NSHostingView-based overlay windows being created/destroyed rapidly
+        // triggers memory corruption during autorelease pool drain (objc_release crash).
+        // The crash occurs in: objc_release -> __RELEASE_OBJECTS_IN_THE_ARRAY__ -> -[__NSArrayM dealloc]
+        //
+        // Workaround: Disable overlay feature until macOS 26 stabilizes or we redesign
+        // to use a pooled/persistent window approach instead of create/destroy cycles.
+        //
+        // See crash reports: floatyclipshot-2025-12-17-201341.ips (and earlier)
+        return
 
         // Get current windows
         guard let windowList = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else {
@@ -385,129 +402,46 @@ class TagManager: ObservableObject {
     deinit {
         windowUpdateTimer?.invalidate()
         saveTimer?.invalidate()
-        NSWorkspace.shared.notificationCenter.removeObserver(self)
-        NotificationCenter.default.removeObserver(self)
-        hideAllOverlays()
+        // Use async to call main-actor isolated method from deinit
+        DispatchQueue.main.async {
+            NSWorkspace.shared.notificationCenter.removeObserver(self)
+            NotificationCenter.default.removeObserver(self)
+            self.hideAllOverlays()
+        }
     }
 }
 
 // MARK: - Floating Tag View
+// Simplified for macOS 26 beta stability - complex effects caused memory crashes
 
 struct FloatingTagView: View {
     let tag: WindowTag
-    @State private var isHovered = false
-    @State private var pulse = false
 
     var body: some View {
-        HStack(spacing: 12) {
-            // Animated color orb with pulsing glow
-            ZStack {
-                // Outer glow ring
-                Circle()
-                    .fill(tag.tagColor.color.opacity(0.3))
-                    .frame(width: 22, height: 22)
-                    .blur(radius: 4)
-                    .scaleEffect(pulse ? 1.3 : 1.0)
+        HStack(spacing: 10) {
+            // Simple color indicator
+            Circle()
+                .fill(tag.tagColor.color)
+                .frame(width: 14, height: 14)
 
-                // Inner vibrant orb
-                Circle()
-                    .fill(
-                        RadialGradient(
-                            colors: [
-                                tag.tagColor.color.opacity(0.9),
-                                tag.tagColor.color
-                            ],
-                            center: .topLeading,
-                            startRadius: 0,
-                            endRadius: 12
-                        )
-                    )
-                    .frame(width: 16, height: 16)
-
-                // Highlight sparkle
-                Circle()
-                    .fill(
-                        RadialGradient(
-                            colors: [
-                                .white.opacity(0.8),
-                                .clear
-                            ],
-                            center: .topLeading,
-                            startRadius: 0,
-                            endRadius: 6
-                        )
-                    )
-                    .frame(width: 16, height: 16)
-                    .offset(x: -3, y: -3)
-            }
-            .shadow(color: tag.tagColor.color.opacity(0.7), radius: 8, x: 0, y: 2)
-
-            // Project name with gradient text
+            // Project name
             if tag.showProjectName {
                 Text(tag.projectName)
-                    .font(.system(size: 15, weight: .bold, design: .rounded))
-                    .foregroundStyle(
-                        LinearGradient(
-                            colors: [
-                                .primary,
-                                .primary.opacity(0.8)
-                            ],
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        )
-                    )
+                    .font(.system(size: 14, weight: .semibold, design: .rounded))
+                    .foregroundColor(.primary)
                     .lineLimit(1)
             }
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 12)
-        .background {
-            ZStack {
-                // Base glass layer
-                Capsule()
-                    .fill(.ultraThinMaterial)
-                    .glassEffect()
-
-                // Colored tint overlay
-                Capsule()
-                    .fill(tag.tagColor.color.opacity(0.08))
-
-                // Top highlight
-                Capsule()
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                .white.opacity(0.25),
-                                .clear
-                            ],
-                            startPoint: .top,
-                            endPoint: .center
-                        )
-                    )
-            }
-        }
-        .overlay {
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(
             Capsule()
-                .strokeBorder(
-                    LinearGradient(
-                        colors: [
-                            .white.opacity(0.5),
-                            tag.tagColor.color.opacity(0.3),
-                            .white.opacity(0.2)
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ),
-                    lineWidth: 1.5
-                )
-        }
-        .shadow(color: .black.opacity(0.2), radius: 12, x: 0, y: 6)
-        .shadow(color: tag.tagColor.color.opacity(0.3), radius: 16, x: 0, y: 4)
-        .onAppear {
-            withAnimation(.easeInOut(duration: 2).repeatForever(autoreverses: true)) {
-                pulse = true
-            }
-        }
+                .fill(Color(nsColor: .windowBackgroundColor).opacity(0.95))
+        )
+        .overlay(
+            Capsule()
+                .strokeBorder(tag.tagColor.color.opacity(0.6), lineWidth: 1.5)
+        )
     }
 }
 

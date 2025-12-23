@@ -70,7 +70,7 @@ struct TagEditorView: View {
                 Text("Position")
                     .font(.headline)
 
-                Picker("Position", selection: $selectedPosition) {
+                Picker("", selection: $selectedPosition) {
                     ForEach(TagPosition.allCases) { position in
                         Label(position.displayName, systemImage: position.icon)
                             .tag(position)
@@ -177,8 +177,7 @@ struct TagEditorView: View {
         .frame(width: 380, height: 580)
         .background {
             RoundedRectangle(cornerRadius: 20)
-                .fill(.regularMaterial)
-                .glassEffect()
+                .fill(Color(nsColor: .windowBackgroundColor).opacity(0.95))
         }
         .onAppear {
             loadExistingTag()
@@ -343,8 +342,7 @@ struct TagListView: View {
         .frame(width: 400, height: 450)
         .background {
             RoundedRectangle(cornerRadius: 20)
-                .fill(.regularMaterial)
-                .glassEffect()
+                .fill(Color(nsColor: .windowBackgroundColor).opacity(0.95))
         }
         .sheet(isPresented: $showEditor) {
             if let tag = selectedTag {

@@ -1,11 +1,11 @@
 cask "floatyclipshot" do
-  version "1.0.0"
-  sha256 "REPLACE_WITH_ACTUAL_SHA256_FROM_RELEASE"
+  version "2.0.0"
+  sha256 "REPLACE_WITH_SHA256_AFTER_RELEASE"
 
-  url "https://github.com/hooshyar/floatyclipshot/releases/download/v#{version}/floatyclipshot-#{version}.zip"
+  url "https://github.com/dev-datacode/floatyclipshot/releases/download/v#{version}/floatyclipshot-#{version}.zip"
   name "FloatyClipshot"
-  desc "Floating button screenshot utility for macOS developers"
-  homepage "https://github.com/hooshyar/floatyclipshot"
+  desc "Floating screenshot utility for macOS developers with clipboard management"
+  homepage "https://github.com/dev-datacode/floatyclipshot"
 
   depends_on macos: ">= :big_sur"
 
@@ -13,18 +13,21 @@ cask "floatyclipshot" do
 
   zap trash: [
     "~/Library/Preferences/com.hooshyar.floatyclipshot.plist",
-    "~/Library/Application Support/floatyclipshot",
+    "~/Library/Application Support/FloatyClipshot",
   ]
 
   caveats <<~EOS
     FloatyClipshot requires the following permissions:
 
-    1. Screen Recording permission:
-       System Preferences → Security & Privacy → Screen Recording
+    1. Screen Recording:
+       System Settings → Privacy & Security → Screen Recording
 
-    2. Accessibility permission (for auto-paste):
-       System Preferences → Security & Privacy → Accessibility
+    2. Accessibility (for auto-paste):
+       System Settings → Privacy & Security → Accessibility
 
     After installation, launch the app and grant these permissions when prompted.
+
+    If the hotkey doesn't work, toggle FloatyClipshot OFF and ON in
+    System Settings → Privacy & Security → Accessibility.
   EOS
 end

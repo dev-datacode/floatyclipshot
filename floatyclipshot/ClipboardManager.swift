@@ -10,6 +10,7 @@ import AppKit
 import SwiftUI
 import Combine  // Added missing Combine import
 import UserNotifications // For modern notifications
+import Vision // For AI features
 
 struct ClipboardItem: Identifiable, Equatable, Codable {
     let id: UUID
@@ -21,8 +22,14 @@ struct ClipboardItem: Identifiable, Equatable, Codable {
     let windowContext: String? // Name of the window/app that was captured
     let dataSize: Int64 // Size in bytes
     var isFavorite: Bool = false
+    var isSensitive: Bool = false // Contains sensitive data (passwords, API keys, etc.)
+    var sensitiveTypes: [String] = [] // Types of sensitive data detected
+    
+    // AI Metadata
+    var ocrText: String? // Text extracted from image
+    var category: String? // Auto-detected category (Code, URL, etc.)
 
-    // Custom decoding to handle old data where isFavorite might be missing
+    // Custom decoding to handle old data where new fields might be missing
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(UUID.self, forKey: .id)
@@ -33,12 +40,16 @@ struct ClipboardItem: Identifiable, Equatable, Codable {
         type = try container.decode(ClipboardItemType.self, forKey: .type)
         windowContext = try container.decodeIfPresent(String.self, forKey: .windowContext)
         dataSize = try container.decode(Int64.self, forKey: .dataSize)
-        // Handle missing key for isFavorite (default to false)
+        // Handle missing keys for new fields (default values)
         isFavorite = try container.decodeIfPresent(Bool.self, forKey: .isFavorite) ?? false
+        isSensitive = try container.decodeIfPresent(Bool.self, forKey: .isSensitive) ?? false
+        sensitiveTypes = try container.decodeIfPresent([String].self, forKey: .sensitiveTypes) ?? []
+        ocrText = try container.decodeIfPresent(String.self, forKey: .ocrText)
+        category = try container.decodeIfPresent(String.self, forKey: .category)
     }
-    
+
     // Default initializer
-    init(id: UUID = UUID(), fileURL: URL? = nil, textContent: String? = nil, dataType: NSPasteboard.PasteboardType, timestamp: Date, type: ClipboardItemType, windowContext: String?, dataSize: Int64, isFavorite: Bool = false) {
+    init(id: UUID = UUID(), fileURL: URL? = nil, textContent: String? = nil, dataType: NSPasteboard.PasteboardType, timestamp: Date, type: ClipboardItemType, windowContext: String?, dataSize: Int64, isFavorite: Bool = false, isSensitive: Bool = false, sensitiveTypes: [String] = [], ocrText: String? = nil, category: String? = nil) {
         self.id = id
         self.fileURL = fileURL
         self.textContent = textContent
@@ -48,6 +59,10 @@ struct ClipboardItem: Identifiable, Equatable, Codable {
         self.windowContext = windowContext
         self.dataSize = dataSize
         self.isFavorite = isFavorite
+        self.isSensitive = isSensitive
+        self.sensitiveTypes = sensitiveTypes
+        self.ocrText = ocrText
+        self.category = category
     }
 
     var displayName: String {
@@ -125,7 +140,10 @@ class ClipboardManager: ObservableObject {
 
     // Storage directory
     private let storageDirectory: URL = {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+            // Fallback to home directory if App Support is unavailable
+            return FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".FloatyClipshot")
+        }
         return appSupport.appendingPathComponent("FloatyClipshot", isDirectory: true)
     }()
 
@@ -144,11 +162,26 @@ class ClipboardManager: ObservableObject {
 
         // Start monitoring clipboard
         startMonitoring()
+
+        // Start sensitive item auto-purge timer
+        startSensitiveItemPurging()
+
+        // Listen for private mode changes
+        NotificationCenter.default.addObserver(
+            forName: .privateModeChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            if let enabled = notification.userInfo?["enabled"] as? Bool {
+                self?.isPaused = enabled
+            }
+        }
     }
 
     deinit {
         timer?.invalidate()
         saveTimer?.invalidate()
+        sensitiveItemPurgeTimer?.invalidate()
         saveHistoryImmediately()
     }
 
@@ -210,55 +243,102 @@ class ClipboardManager: ObservableObject {
         ioQueue.async { [weak self] in
             guard let self = self else { return }
 
+            Task { @MainActor in
+                let encryptionEnabled = SettingsManager.shared.encryptionEnabled
+                
+                self.ioQueue.async {
+                    do {
+                        var data = try Data(contentsOf: self.historyFile)
+
+                        // Decrypt if encryption is enabled and data appears encrypted
+                        if encryptionEnabled {
+                            // Check if data is encrypted (encrypted data won't be valid JSON)
+                            if !self.isValidJSON(data) {
+                                do {
+                                    data = try EncryptionManager.shared.decrypt(data)
+                                    print("🔐 Decrypted clipboard history")
+                                } catch {
+                                    print("⚠️ Failed to decrypt history: \(error)")
+                                    // Try loading as unencrypted (migration scenario)
+                                }
+                            }
+                        }
+
+                        let items = try JSONDecoder().decode([ClipboardItem].self, from: data)
+
+                        DispatchQueue.main.async {
+                            self.clipboardHistory = items
+                            self.calculateTotalSize()
+                            self.isLoadingHistory = false
+
+                            // If encryption is enabled but data was unencrypted, re-save encrypted
+                            if encryptionEnabled {
+                                self.saveHistory()
+                            }
+                        }
+                    } catch {
+                        // ... rest of error handling ...
+                        self.handleLoadError(error, encryptionEnabled: encryptionEnabled)
+                    }
+                }
+            }
+        }
+    }
+
+    private func handleLoadError(_ error: Error, encryptionEnabled: Bool) {
+        print("⚠️ Failed to load clipboard history: \(error)")
+
+        // Attempt to restore from backups (tries .1, .2, .3, .4, .5)
+        print("🔄 Attempting to restore from backups...")
+        if let backupData = self.restoreFromBackups(for: self.historyFile) {
             do {
-                let data = try Data(contentsOf: self.historyFile)
+                var data = backupData
+                // Try decrypting backup if needed
+                if encryptionEnabled && !self.isValidJSON(data) {
+                    data = try EncryptionManager.shared.decrypt(data)
+                }
+
                 let items = try JSONDecoder().decode([ClipboardItem].self, from: data)
 
                 DispatchQueue.main.async {
                     self.clipboardHistory = items
                     self.calculateTotalSize()
                     self.isLoadingHistory = false
+                    print("✅ Restored \(items.count) items from backup")
                 }
+
+                // Notify user of successful recovery
+                self.showWarningAlert(
+                    title: "Data Recovered",
+                    message: "Your clipboard history was corrupted but has been restored from a backup (\(items.count) items recovered)."
+                )
+                return
             } catch {
-                print("⚠️ Failed to load clipboard history: \(error)")
-
-                // Attempt to restore from backups (tries .1, .2, .3, .4, .5)
-                print("🔄 Attempting to restore from backups...")
-                if let backupData = self.restoreFromBackups(for: self.historyFile) {
-                    do {
-                        let items = try JSONDecoder().decode([ClipboardItem].self, from: backupData)
-
-                        DispatchQueue.main.async {
-                            self.clipboardHistory = items
-                            self.calculateTotalSize()
-                            self.isLoadingHistory = false
-                            print("✅ Restored \(items.count) items from backup")
-                        }
-
-                        // Notify user of successful recovery
-                        self.showWarningAlert(
-                            title: "Data Recovered",
-                            message: "Your clipboard history was corrupted but has been restored from a backup (\(items.count) items recovered)."
-                        )
-                        return
-                    } catch {
-                        print("⚠️ All backup restorations failed: \(error)")
-                        self.showCriticalAlert(
-                            title: "Data Recovery Failed",
-                            message: "Clipboard history could not be loaded and all backups are corrupted. Starting with empty history."
-                        )
-                    }
-                } else {
-                    self.showCriticalAlert(
-                        title: "History Load Failed",
-                        message: "Could not load clipboard history and no backups were found. Starting with empty history."
-                    )
-                }
-
-                DispatchQueue.main.async {
-                    self.isLoadingHistory = false
-                }
+                print("⚠️ All backup restorations failed: \(error)")
+                self.showCriticalAlert(
+                    title: "Data Recovery Failed",
+                    message: "Clipboard history could not be loaded and all backups are corrupted. Starting with empty history."
+                )
             }
+        } else {
+            self.showCriticalAlert(
+                title: "History Load Failed",
+                message: "Could not load clipboard history and no backups were found. Starting with empty history."
+            )
+        }
+
+        DispatchQueue.main.async {
+            self.isLoadingHistory = false
+        }
+    }
+
+    /// Check if data is valid JSON (used to detect encrypted vs unencrypted data)
+    private func isValidJSON(_ data: Data) -> Bool {
+        do {
+            _ = try JSONSerialization.jsonObject(with: data)
+            return true
+        } catch {
+            return false
         }
     }
 
@@ -272,37 +352,52 @@ class ClipboardManager: ObservableObject {
 
     func saveHistoryImmediately() {
         let itemsToSave = clipboardHistory
+        
+        Task { @MainActor in
+            let encryptionEnabled = SettingsManager.shared.encryptionEnabled
 
-        ioQueue.async { [weak self] in
-            guard let self = self else { return }
+            ioQueue.async { [weak self] in
+                guard let self = self else { return }
 
-            do {
-                let encoder = JSONEncoder()
-                encoder.outputFormatting = .prettyPrinted
-                let data = try encoder.encode(itemsToSave)
+                do {
+                    let encoder = JSONEncoder()
+                    encoder.outputFormatting = .prettyPrinted
+                    var data = try encoder.encode(itemsToSave)
 
-                // Check disk space before saving (account for 5 backups)
-                guard self.hasEnoughDiskSpace(requiredBytes: Int64(data.count)) else {
-                    print("⚠️ Insufficient disk space to save history (\(data.count) bytes)")
+                    // Encrypt data if encryption is enabled
+                    if encryptionEnabled {
+                        do {
+                            data = try EncryptionManager.shared.encrypt(data)
+                            print("🔐 Encrypted clipboard history for storage")
+                        } catch {
+                            print("⚠️ Failed to encrypt history, saving unencrypted: \(error)")
+                            // Fall back to unencrypted if encryption fails
+                        }
+                    }
+
+                    // Check disk space before saving (account for 5 backups)
+                    guard self.hasEnoughDiskSpace(requiredBytes: Int64(data.count)) else {
+                        print("⚠️ Insufficient disk space to save history (\(data.count) bytes)")
+                        self.showCriticalAlert(
+                            title: "Disk Space Critical",
+                            message: "Cannot save clipboard history. Your disk is nearly full. Please free up space to prevent data loss."
+                        )
+                        return
+                    }
+
+                    // Rotate backups before saving (keeps 5 generations)
+                    self.rotateBackups(for: self.historyFile)
+
+                    try data.write(to: self.historyFile, options: .atomic)
+                    self.setSecurePermissions(for: self.historyFile)
+                    print("✅ Saved \(itemsToSave.count) items to history\(encryptionEnabled ? " (encrypted)" : "")")
+                } catch {
+                    print("⚠️ Failed to save clipboard history: \(error)")
                     self.showCriticalAlert(
-                        title: "Disk Space Critical",
-                        message: "Cannot save clipboard history. Your disk is nearly full. Please free up space to prevent data loss."
+                        title: "Save Failed",
+                        message: "Could not save clipboard history: \(error.localizedDescription)\n\nYour clipboard data may be lost if the app crashes."
                     )
-                    return
                 }
-
-                // Rotate backups before saving (keeps 5 generations)
-                self.rotateBackups(for: self.historyFile)
-
-                try data.write(to: self.historyFile, options: .atomic)
-                self.setSecurePermissions(for: self.historyFile)
-                print("✅ Saved \(itemsToSave.count) items to history")
-            } catch {
-                print("⚠️ Failed to save clipboard history: \(error)")
-                self.showCriticalAlert(
-                    title: "Save Failed",
-                    message: "Could not save clipboard history: \(error.localizedDescription)\n\nYour clipboard data may be lost if the app crashes."
-                )
             }
         }
     }
@@ -562,6 +657,88 @@ class ClipboardManager: ObservableObject {
         }
     }
 
+    // MARK: - Sensitive Data Purging
+
+    private var sensitiveItemPurgeTimer: Timer?
+
+    /// Start the timer to purge sensitive items based on user settings
+    func startSensitiveItemPurging() {
+        // Invalidate any existing timer
+        sensitiveItemPurgeTimer?.invalidate()
+
+        // Run check every minute
+        sensitiveItemPurgeTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+            self?.purgeSensitiveItemsIfNeeded()
+        }
+
+        // Also run immediately
+        purgeSensitiveItemsIfNeeded()
+    }
+
+    /// Purge sensitive items older than the configured time
+    private func purgeSensitiveItemsIfNeeded() {
+        let purgeMinutes = SettingsManager.shared.sensitivePurgeMinutes
+
+        // Skip if purging is disabled (0 = never)
+        guard purgeMinutes > 0 else { return }
+
+        let purgeThreshold = Date().addingTimeInterval(-Double(purgeMinutes * 60))
+        var itemsToRemove: [ClipboardItem] = []
+
+        // Find sensitive items older than threshold
+        for item in clipboardHistory {
+            if item.isSensitive && item.timestamp < purgeThreshold {
+                itemsToRemove.append(item)
+            }
+        }
+
+        // Remove items
+        if !itemsToRemove.isEmpty {
+            print("🔐 Auto-purging \(itemsToRemove.count) sensitive items older than \(purgeMinutes) minutes")
+
+            for item in itemsToRemove {
+                removeSensitiveItem(item)
+            }
+
+            saveHistory()
+        }
+    }
+
+    /// Securely remove a sensitive item (with file overwrite)
+    private func removeSensitiveItem(_ item: ClipboardItem) {
+        // Remove from history
+        clipboardHistory.removeAll { $0.id == item.id }
+        totalStorageUsed -= item.dataSize
+
+        // Securely delete associated file if present
+        if let fileURL = item.fileURL {
+            secureDeleteFile(at: fileURL)
+        }
+    }
+
+    /// Securely delete a file by overwriting before removal
+    private func secureDeleteFile(at url: URL) {
+        do {
+            // Get file size
+            let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+            let fileSize = attributes[.size] as? Int ?? 0
+
+            // Overwrite with random data
+            if fileSize > 0 {
+                let randomData = Data((0..<fileSize).map { _ in UInt8.random(in: 0...255) })
+                try randomData.write(to: url)
+            }
+
+            // Delete the file
+            try FileManager.default.removeItem(at: url)
+            print("🔐 Securely deleted file: \(url.lastPathComponent)")
+        } catch {
+            // Fall back to normal delete
+            try? FileManager.default.removeItem(at: url)
+            print("⚠️ Could not securely delete, performed normal delete: \(error)")
+        }
+    }
+
     private func deleteImageFile(for id: UUID) {
         let imageFile = imagesDirectory.appendingPathComponent("\(id.uuidString).png")
         try? FileManager.default.removeItem(at: imageFile)
@@ -573,11 +750,22 @@ class ClipboardManager: ObservableObject {
         return formatter.string(fromByteCount: bytes)
     }
 
+    // MARK: - Clipboard Monitoring & Processing
+
+    private struct ExtractedClipboardData {
+        let id: UUID
+        let type: ClipboardItemType
+        let dataType: NSPasteboard.PasteboardType
+        let data: Data?
+        let textContent: String?
+        let windowContext: String?
+    }
+
     private func startMonitoring() {
         lastChangeCount = NSPasteboard.general.changeCount
 
-        // Poll every 100ms for instant clipboard detection (was 500ms)
-        // Research shows 0.1s is industry standard for responsive clipboard tools
+        // Poll every 0.1s for clipboard detection (industry standard responsiveness)
+        // Previous 0.5s caused noticeable delay between screenshot and clipboard update
         timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
             self?.checkClipboardChange()
         }
@@ -614,131 +802,235 @@ class ClipboardManager: ObservableObject {
     
     private func addCurrentClipboardItem() {
         let pasteboard = NSPasteboard.general
+        
+        // Wrap extraction in autoreleasepool to ensure temporary objects are cleaned up promptly
+        autoreleasepool {
+            guard let items = pasteboard.pasteboardItems, !items.isEmpty else { return }
 
-        guard let items = pasteboard.pasteboardItems, !items.isEmpty else { return }
+            // 1. Extract data on Main Thread (NSPasteboard must be accessed on Main)
+            var extractedItems: [ExtractedClipboardData] = []
+            // Get window context from currently selected window on Main Thread
+            let windowContext = WindowManager.shared.selectedWindow?.displayName
 
-        for pasteboardItem in items {
-            if let clipboardItem = createClipboardItem(from: pasteboardItem) {
-                DispatchQueue.main.async { [weak self] in
-                    guard let self = self else { return }
+            for pasteboardItem in items {
+                if let extracted = extractClipboardData(from: pasteboardItem, windowContext: windowContext) {
+                    extractedItems.append(extracted)
+                }
+            }
 
-                    // Check if this content already exists in the last 5 items (avoid near duplicates)
-                    // Use proper content comparison, not just type matching
-                    let recentItems = self.clipboardHistory.prefix(5)
-                    let isDuplicate = recentItems.contains { existingItem in
-                        self.areItemsDuplicate(existingItem, clipboardItem)
+            guard !extractedItems.isEmpty else { return }
+
+            // 2. Process and Save on Background Thread (File I/O)
+            ioQueue.async { [weak self] in
+                guard let self = self else { return }
+                
+                var newItems: [ClipboardItem] = []
+                
+                for extracted in extractedItems {
+                    if let item = self.processAndSave(extracted) {
+                        newItems.append(item)
                     }
+                }
+                
+                guard !newItems.isEmpty else { return }
 
-                    if !isDuplicate {
-                        // Add new item
-                        self.clipboardHistory.insert(clipboardItem, at: 0)
-                        self.totalStorageUsed += clipboardItem.dataSize
+                // 3. Update UI on Main Thread
+                DispatchQueue.main.async {
+                    // Check for duplicates and add
+                    for clipboardItem in newItems {
+                        // Check if this content already exists in the last 5 items (avoid near duplicates)
+                        let recentItems = self.clipboardHistory.prefix(5)
+                        let isDuplicate = recentItems.contains { existingItem in
+                            self.areItemsDuplicate(existingItem, clipboardItem)
+                        }
 
-                        // Check if cleanup is needed
-                        self.checkAndCleanupStorage()
+                        if !isDuplicate {
+                            // Add new item
+                            self.clipboardHistory.insert(clipboardItem, at: 0)
+                            self.totalStorageUsed += clipboardItem.dataSize
 
-                        // Save updated history
-                        self.saveHistory()
-                    } else {
-                        print("📋 Skipping duplicate clipboard item")
+                            // Check if cleanup is needed
+                            self.checkAndCleanupStorage()
+                        } else {
+                            print("📋 Skipping duplicate clipboard item")
+                        }
                     }
+                    
+                    // Save updated history (debounced)
+                    self.saveHistory()
                 }
             }
         }
     }
     
-    private func createClipboardItem(from pasteboardItem: NSPasteboardItem) -> ClipboardItem? {
-        let type: ClipboardItemType
-        var fileURL: URL?
-        var textContent: String?
-        var dataType: NSPasteboard.PasteboardType
-        var dataSize: Int64
+    /// Extract data from NSPasteboardItem without performing file I/O
+    private func extractClipboardData(from pasteboardItem: NSPasteboardItem, windowContext: String?) -> ExtractedClipboardData? {
         let itemID = UUID()
+        var type: ClipboardItemType
+        var dataType: NSPasteboard.PasteboardType
+        var data: Data?
+        var textContent: String?
 
         if pasteboardItem.types.contains(.png),
            let pngData = pasteboardItem.data(forType: .png) {
-            dataSize = Int64(pngData.count)
-
-            // Check size limit
-            if dataSize > Constants.maxItemSize {
-                print("⚠️ Skipping clipboard item: size \(formatBytes(dataSize)) exceeds limit of \(formatBytes(Constants.maxItemSize))")
-                showNotification("⚠️ Clipboard item too large (\(formatBytes(dataSize))). Max allowed: \(formatBytes(Constants.maxItemSize))")
-                return nil
-            }
-
             type = .image
             dataType = .png
-            // Save image to file
-            fileURL = saveImageFile(id: itemID, data: pngData)
+            // CRITICAL: Force copy data to ensure safe threading and detach from NSPasteboard
+            data = Data(pngData)
         } else if pasteboardItem.types.contains(.tiff),
                   let tiffData = pasteboardItem.data(forType: .tiff) {
-            dataSize = Int64(tiffData.count)
-
-            // Check size limit
-            if dataSize > Constants.maxItemSize {
-                print("⚠️ Skipping clipboard item: size \(formatBytes(dataSize)) exceeds limit of \(formatBytes(Constants.maxItemSize))")
-                showNotification("⚠️ Clipboard item too large (\(formatBytes(dataSize))). Max allowed: \(formatBytes(Constants.maxItemSize))")
-                return nil
-            }
-
             type = .image
             dataType = .tiff
-            // Save image to file
-            fileURL = saveImageFile(id: itemID, data: tiffData)
+            // CRITICAL: Force copy data to ensure safe threading and detach from NSPasteboard
+            data = Data(tiffData)
         } else if pasteboardItem.types.contains(.string),
                   let string = pasteboardItem.string(forType: .string) {
-            dataSize = Int64(string.utf8.count)
-
-            // Check size limit
-            if dataSize > Constants.maxItemSize {
-                print("⚠️ Skipping clipboard item: size \(formatBytes(dataSize)) exceeds limit of \(formatBytes(Constants.maxItemSize))")
-                showNotification("⚠️ Clipboard text too large (\(formatBytes(dataSize))). Max allowed: \(formatBytes(Constants.maxItemSize))")
-                return nil
-            }
-
             let preview = String(string.prefix(30))
             type = .text(preview)
             dataType = .string
-            // Store text directly (small)
             textContent = string
+            // Text data is small, we can derive data later or store as nil for now if using textContent
+            data = string.data(using: .utf8)
         } else {
             // Try to get any available data
             if let firstType = pasteboardItem.types.first,
                let availableData = pasteboardItem.data(forType: firstType) {
-                dataSize = Int64(availableData.count)
-
-                // Check size limit
-                if dataSize > Constants.maxItemSize {
-                    print("⚠️ Skipping clipboard item: size \(formatBytes(dataSize)) exceeds limit of \(formatBytes(Constants.maxItemSize))")
-                    showNotification("⚠️ Clipboard item too large (\(formatBytes(dataSize))). Max allowed: \(formatBytes(Constants.maxItemSize))")
-                    return nil
-                }
-
                 type = .unknown
                 dataType = firstType
-                dataSize = Int64(availableData.count)
-                // Save to file
-                fileURL = saveImageFile(id: itemID, data: availableData)
+                // CRITICAL: Force copy data to ensure safe threading and detach from NSPasteboard
+                data = Data(availableData)
             } else {
                 return nil // Could not get any data
             }
         }
 
-        // Get window context from currently selected window
-        let windowContext = WindowManager.shared.selectedWindow?.displayName
-
-        return ClipboardItem(
+        return ExtractedClipboardData(
             id: itemID,
-            fileURL: fileURL,
-            textContent: textContent,
-            dataType: dataType,
-            timestamp: Date(),
             type: type,
-            windowContext: windowContext,
-            dataSize: dataSize
+            dataType: dataType,
+            data: data,
+            textContent: textContent,
+            windowContext: windowContext
         )
     }
     
+    /// Process extracted data and save to disk if needed (Background Thread Safe)
+    private func processAndSave(_ extracted: ExtractedClipboardData) -> ClipboardItem? {
+        var fileURL: URL?
+        var dataSize: Int64 = 0
+        
+        if let data = extracted.data {
+            dataSize = Int64(data.count)
+            
+            // Check size limit
+            if dataSize > Constants.maxItemSize {
+                print("⚠️ Skipping clipboard item: size \(formatBytes(dataSize)) exceeds limit")
+                DispatchQueue.main.async {
+                    self.showNotification("⚠️ Item too large (\(self.formatBytes(dataSize)))")
+                }
+                return nil
+            }
+            
+            // Save image/unknown types to disk
+            if extracted.type == .image || extracted.type == .unknown {
+                fileURL = saveImageFile(id: extracted.id, data: data)
+                // If save failed (e.g. disk full), return nil
+                if fileURL == nil { return nil }
+            }
+        } else {
+            // Should not happen if extraction worked, but safe fallback
+            if extracted.textContent == nil { return nil }
+        }
+
+        // Detect sensitive data (can be done on background)
+        var isSensitive = false
+        var sensitiveTypes: [String] = []
+
+        if SettingsManager.shared.autoDetectSensitive, let text = extracted.textContent {
+            let detectedTypes = EncryptionManager.shared.detectSensitiveData(in: text)
+            if !detectedTypes.isEmpty {
+                isSensitive = true
+                sensitiveTypes = detectedTypes.map { $0.rawValue }
+                print("🔐 Detected sensitive data: \(sensitiveTypes.joined(separator: ", "))")
+            }
+        }
+
+        return ClipboardItem(
+            id: extracted.id,
+            fileURL: fileURL,
+            textContent: extracted.textContent,
+            dataType: extracted.dataType,
+            timestamp: Date(),
+            type: extracted.type,
+            windowContext: extracted.windowContext,
+            dataSize: dataSize,
+            isSensitive: isSensitive,
+            sensitiveTypes: sensitiveTypes
+        )
+    }
+    
+    // MARK: - Drop Integration
+
+    /// Add a dropped image or file data directly to history
+    func addDroppedItem(data: Data, type: NSPasteboard.PasteboardType) {
+        // Create extraction wrapper
+        let itemID = UUID()
+        let clipboardType: ClipboardItemType = (type == .png || type == .tiff) ? .image : .unknown
+        
+        // Force copy just in case
+        let safeData = Data(data)
+        
+        let extracted = ExtractedClipboardData(
+            id: itemID,
+            type: clipboardType,
+            dataType: type,
+            data: safeData,
+            textContent: nil,
+            windowContext: "Drop Zone"
+        )
+        
+        // Process in background
+        ioQueue.async { [weak self] in
+            guard let self = self else { return }
+            
+            if let item = self.processAndSave(extracted) {
+                DispatchQueue.main.async {
+                    self.clipboardHistory.insert(item, at: 0)
+                    self.totalStorageUsed += item.dataSize
+                    self.checkAndCleanupStorage()
+                    self.saveHistory()
+                }
+            }
+        }
+    }
+    
+    /// Add dropped text directly to history
+    func addDroppedItem(text: String) {
+        let itemID = UUID()
+        let preview = String(text.prefix(30))
+        let extracted = ExtractedClipboardData(
+            id: itemID,
+            type: .text(preview),
+            dataType: .string,
+            data: text.data(using: .utf8),
+            textContent: text,
+            windowContext: "Drop Zone"
+        )
+        
+        ioQueue.async { [weak self] in
+            guard let self = self else { return }
+            
+            if let item = self.processAndSave(extracted) {
+                DispatchQueue.main.async {
+                    self.clipboardHistory.insert(item, at: 0)
+                    self.totalStorageUsed += item.dataSize
+                    self.checkAndCleanupStorage()
+                    self.saveHistory()
+                }
+            }
+        }
+    }
+
     // MARK: - Clipboard Actions
 
     func toggleFavorite(_ item: ClipboardItem) {
