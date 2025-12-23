@@ -486,17 +486,41 @@ final class ScreenshotManager: ObservableObject {
 
     /// Open System Settings to the specific page
     func openSystemSettings(for permission: PermissionType) {
-        let urlString: String
+        // macOS 13+ uses new System Settings URL schemes
+        let modernURL: String
+        let legacyURL: String
+
         switch permission {
         case .accessibility:
-            urlString = "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+            modernURL = "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+            legacyURL = "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
         case .screenRecording:
-            urlString = "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+            modernURL = "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+            legacyURL = "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
         }
-        
-        if let url = URL(string: urlString) {
-            NSWorkspace.shared.open(url)
+
+        // Try modern URL first, fall back to legacy, then open System Settings directly
+        if let url = URL(string: modernURL), NSWorkspace.shared.open(url) {
+            return
         }
+
+        if let url = URL(string: legacyURL), NSWorkspace.shared.open(url) {
+            return
+        }
+
+        // Fallback: Open System Settings app directly via shell
+        let script: String
+        switch permission {
+        case .accessibility:
+            script = "open 'x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility' 2>/dev/null || open -b com.apple.systempreferences"
+        case .screenRecording:
+            script = "open 'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture' 2>/dev/null || open -b com.apple.systempreferences"
+        }
+
+        let process = Process()
+        process.launchPath = "/bin/sh"
+        process.arguments = ["-c", script]
+        try? process.run()
     }
 
     enum PermissionType {
