@@ -17,6 +17,9 @@ cask "floatyclipshot" do
   ]
 
   caveats <<~EOS
+    IMPORTANT: If macOS says the app is "damaged", run:
+      xattr -cr /Applications/floatyclipshot.app
+
     FloatyClipshot requires the following permissions:
 
     1. Screen Recording:

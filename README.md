@@ -28,7 +28,11 @@ brew install --cask floatyclipshot
 
 1. Download the latest release from [GitHub Releases](https://github.com/dev-datacode/floatyclipshot/releases)
 2. Unzip and drag `floatyclipshot.app` to `/Applications`
-3. Right-click → Open (first launch only, to bypass Gatekeeper)
+3. **If macOS says the app is "damaged"**, run:
+   ```bash
+   xattr -cr /Applications/floatyclipshot.app
+   ```
+4. Right-click → Open (first launch only, to bypass Gatekeeper)
 
 ### Build from Source
 
