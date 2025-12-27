@@ -118,9 +118,12 @@ final class ScreenshotManager: ObservableObject {
 
     /// Target apps that can be auto-paired (simulators, browsers, etc.)
     private static let autoTargetApps: Set<String> = [
-        "Simulator",        // iOS Simulator
-        "Android Emulator", // Android Studio Emulator
-        "Safari",           // Web browser
+        "Simulator",            // iOS Simulator
+        "Android Emulator",     // Android Studio Emulator (display name)
+        "qemu-system-x86_64",   // Android Emulator on Intel Macs
+        "qemu-system-aarch64",  // Android Emulator on Apple Silicon Macs
+        "Emulator",             // Android Emulator alternative name
+        "Safari",               // Web browser
         "Google Chrome",    // Web browser
         "Firefox",          // Web browser
         "Arc",              // Web browser
@@ -128,6 +131,32 @@ final class ScreenshotManager: ObservableObject {
         "Brave Browser",    // Web browser
         "Preview",          // Image viewer
     ]
+
+    /// Check if an owner name is a simulator or emulator
+    private static func isSimulatorOrEmulator(_ ownerName: String) -> Bool {
+        switch ownerName {
+        case "Simulator",
+             "Android Emulator",
+             "qemu-system-x86_64",
+             "qemu-system-aarch64",
+             "Emulator":
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// Get user-friendly display name for simulator/emulator owner names
+    private static func displayName(for ownerName: String) -> String {
+        switch ownerName {
+        case "Simulator":
+            return "iOS Simulator"
+        case "Android Emulator", "qemu-system-x86_64", "qemu-system-aarch64", "Emulator":
+            return "Android Emulator"
+        default:
+            return ownerName
+        }
+    }
 
     /// Get simulators/browsers on the current Space (on-screen only)
     /// Uses .optionOnScreenOnly to filter to current Space
@@ -173,10 +202,10 @@ final class ScreenshotManager: ObservableObject {
             targets.append(windowInfo)
         }
 
-        // Sort: Simulators first, then browsers, then by window name
+        // Sort: Simulators/Emulators first, then browsers, then by window name
         targets.sort { a, b in
-            let aIsSimulator = a.ownerName == "Simulator"
-            let bIsSimulator = b.ownerName == "Simulator"
+            let aIsSimulator = Self.isSimulatorOrEmulator(a.ownerName)
+            let bIsSimulator = Self.isSimulatorOrEmulator(b.ownerName)
             if aIsSimulator != bIsSimulator { return aIsSimulator }
             if a.ownerName != b.ownerName { return a.ownerName < b.ownerName }
             return a.name < b.name
@@ -185,9 +214,9 @@ final class ScreenshotManager: ObservableObject {
         return targets
     }
 
-    /// Get simulators only (for focused capture)
+    /// Get simulators and emulators only (for focused capture)
     func getOnScreenSimulators() -> [WindowInfo] {
-        return getOnScreenTargets().filter { $0.ownerName == "Simulator" }
+        return getOnScreenTargets().filter { Self.isSimulatorOrEmulator($0.ownerName) }
     }
 
     /// Update auto-pairing status based on current state
@@ -712,8 +741,8 @@ Alternative: Use \(HotkeyManager.shared.hotkeyDisplayString) to capture without 
         let onScreenTargets = getOnScreenTargets()
         print("   🔍 Found \(onScreenTargets.count) target(s) on current Space")
 
-        // Prefer simulators for auto-pairing
-        let simulators = onScreenTargets.filter { $0.ownerName == "Simulator" }
+        // Prefer simulators/emulators for auto-pairing
+        let simulators = onScreenTargets.filter { Self.isSimulatorOrEmulator($0.ownerName) }
 
         if simulators.count == 1 {
             // Single simulator - auto-capture and create pairing
@@ -729,7 +758,7 @@ Alternative: Use \(HotkeyManager.shared.hotkeyDisplayString) to capture without 
             print("   🔗 Auto-paired: \(pairing.displayName) (mode: \(pairing.pasteMode.displayName))")
 
             captureWithPasteMode(target, pasteMode: pairing.pasteMode, sourceWindow: sourceWindow)
-            showToast("Captured \(target.name.isEmpty ? "Simulator" : target.name)", type: .success)
+            showToast("Captured \(target.name.isEmpty ? Self.displayName(for: target.ownerName) : target.name)", type: .success)
             return
 
         } else if simulators.count > 1 {

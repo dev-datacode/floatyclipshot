@@ -386,6 +386,7 @@ struct QuickPairMenu: View {
     private func targetIcon(for target: WindowInfo) -> String {
         switch target.ownerName {
         case "Simulator": return "iphone"
+        case "Android Emulator", "qemu-system-x86_64", "qemu-system-aarch64", "Emulator": return "apps.iphone"
         case "Safari": return "safari"
         case "Google Chrome", "Chrome": return "globe"
         case "Terminal", "iTerm2": return "terminal"
