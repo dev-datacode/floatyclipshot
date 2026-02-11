@@ -30,3 +30,4 @@ firebase-debug.log
 
 # Build outputs
 /tmp/floatyclipshot_build_output/
+.cto/
