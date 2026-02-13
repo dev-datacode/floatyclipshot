@@ -158,7 +158,69 @@ final class ScreenshotManager: ObservableObject {
         }
     }
 
-    /// Get simulators/browsers on the current Space (on-screen only)
+    /// Get ALL capturable windows on the current Space (excluding self and source app)
+    /// Used by Quick Pair to show pairing targets for any app (not just terminals)
+    func getAllOnScreenTargets(excludingApp: String? = nil) -> [WindowInfo] {
+        guard let windowList = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else {
+            return []
+        }
+
+        var targets: [WindowInfo] = []
+
+        for windowDict in windowList {
+            guard let windowID = windowDict[kCGWindowNumber as String] as? Int,
+                  let ownerName = windowDict[kCGWindowOwnerName as String] as? String,
+                  let boundsDict = windowDict[kCGWindowBounds as String] as? [String: Any] else {
+                continue
+            }
+
+            // Skip our own windows
+            if ownerName.contains("floatyclipshot") || ownerName.contains("FloatingScreenshot") {
+                continue
+            }
+
+            // Skip the source app (don't pair an app with itself)
+            if let excludeApp = excludingApp, ownerName == excludeApp {
+                continue
+            }
+
+            // Skip system UI elements
+            let systemApps: Set<String> = ["Window Server", "SystemUIServer", "Control Center", "Notification Center", "Dock", "Spotlight"]
+            if systemApps.contains(ownerName) { continue }
+
+            let windowName = windowDict[kCGWindowName as String] as? String ?? ""
+            let ownerPID = windowDict[kCGWindowOwnerPID as String] as? Int ?? 0
+            let x = boundsDict["X"] as? CGFloat ?? 0
+            let y = boundsDict["Y"] as? CGFloat ?? 0
+            let width = boundsDict["Width"] as? CGFloat ?? 0
+            let height = boundsDict["Height"] as? CGFloat ?? 0
+
+            // Skip small windows (menubars, popups, etc.)
+            guard width >= 100 && height >= 100 else { continue }
+
+            let windowInfo = WindowInfo(
+                id: windowID,
+                name: windowName,
+                ownerName: ownerName,
+                ownerPID: ownerPID,
+                bounds: CGRect(x: x, y: y, width: width, height: height)
+            )
+            targets.append(windowInfo)
+        }
+
+        // Sort: Simulators first, then by app name, then window name
+        targets.sort { a, b in
+            let aIsSimulator = Self.isSimulatorOrEmulator(a.ownerName)
+            let bIsSimulator = Self.isSimulatorOrEmulator(b.ownerName)
+            if aIsSimulator != bIsSimulator { return aIsSimulator }
+            if a.ownerName != b.ownerName { return a.ownerName < b.ownerName }
+            return a.name < b.name
+        }
+
+        return targets
+    }
+
+    /// Get simulators/browsers on the current Space (on-screen only) — legacy, used for auto-pairing
     /// Uses .optionOnScreenOnly to filter to current Space
     func getOnScreenTargets() -> [WindowInfo] {
         guard let windowList = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else {

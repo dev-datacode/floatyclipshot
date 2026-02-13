@@ -408,14 +408,14 @@ struct FloatingMenuView: View {
                 }
                 .padding(.horizontal, 4)
 
-                // Show simulators/targets for quick pairing
-                let targets = ScreenshotManager.shared.getOnScreenTargets()
+                // Show all capturable windows for quick pairing (exclude source app)
+                let targets = ScreenshotManager.shared.getAllOnScreenTargets(excludingApp: cachedPreviousFrontmostApp)
                 if targets.isEmpty {
                     HStack {
                         Image(systemName: "info.circle")
                             .font(.system(size: 10))
                             .foregroundStyle(.secondary)
-                        Text("No simulators or browsers on this Space")
+                        Text("No windows to capture on this Space")
                             .font(.system(size: 10))
                             .foregroundStyle(.secondary)
                     }
