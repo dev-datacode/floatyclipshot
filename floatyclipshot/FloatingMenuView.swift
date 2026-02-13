@@ -394,8 +394,8 @@ struct FloatingMenuView: View {
     // MARK: - Windows Tab
     @ViewBuilder
     private var windowsTab: some View {
-        // Quick Pair Section - Show when menu opened from a terminal
-        if TerminalApps.isTerminal(cachedPreviousFrontmostApp) {
+        // Quick Pair Section - Show when menu opened from a recognized app
+        if !cachedPreviousFrontmostApp.isEmpty && AppRegistry.category(forAppName: cachedPreviousFrontmostApp) != .generic {
             VStack(spacing: 8) {
                 HStack {
                     Image(systemName: "link.circle.fill")

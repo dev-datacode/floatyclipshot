@@ -806,7 +806,7 @@ Alternative: Use \(HotkeyManager.shared.hotkeyDisplayString) to capture without 
             return
         }
 
-        // Non-terminal - use clipboard mode
+        // All other recognized apps (chat, email, etc.) - use clipboard + auto-paste
         print("   ℹ️ Using clipboard mode for \(sourceCategory)")
         // Regular app - use clipboard + auto-paste
         var arguments = ["-x", "-c", "-T", "0", "-o"]  // -T 0 disables thumbnail, -o disables shadow for faster capture
